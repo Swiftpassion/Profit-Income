@@ -9,7 +9,7 @@ import datetime
 
 # --- CONFIGURATION ---
 # ใส่ ID ของโฟลเดอร์แม่ "LAZADA SHOPEE TIKTOK" จาก URL ของ Google Drive ตรงนี้
-PARENT_FOLDER_ID = 'YOUR_GOOGLE_DRIVE_FOLDER_ID_HERE' 
+PARENT_FOLDER_ID = '1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot' 
 
 # ตั้งค่า Supabase Connection (ดึงจาก st.secrets)
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
