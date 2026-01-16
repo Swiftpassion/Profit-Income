@@ -56,6 +56,7 @@ def clean_scientific_notation(val):
         return str(val)
 
 # --- PROCESSOR: TIKTOK ---
+# --- PROCESSOR: TIKTOK ---
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     
@@ -65,12 +66,27 @@ def process_tiktok(order_files, income_files, shop_name):
         if 'xlsx' in file_info['name']:
             f_data = download_file(file_info['id'])
             # TikTok Income: Sheet "Order details"
-            df = pd.read_excel(f_data, sheet_name='Order details', dtype={'Related order ID': str})
-            # Columns: AV=Related order ID, F=Total settlement amount, D=Order settled time, N=Total Fees
-            # Adjust column letters to indices (0-based): AV=47, F=5, D=3, N=13
-            # แต่การใช้ชื่อ Column จะแม่นยำกว่าหาก Header ตรง
-            df = df[['Related order ID', 'Total settlement amount', 'Order settled time', 'Total Fees']]
-            income_dfs.append(df)
+            # อ่านมาก่อนโดยไม่กำหนดชื่อคอลัมน์
+            df = pd.read_excel(f_data, sheet_name='Order details')
+            
+            # แก้ไข: ดึงข้อมูลตามตำแหน่งคอลัมน์ (Index) ที่คุณระบุมา
+            # D (index 3) = Order settled time
+            # F (index 5) = Total settlement amount
+            # N (index 13) = Total Fees
+            # AV (index 47) = Related order ID
+            try:
+                # เลือกคอลัมน์ด้วย iloc [ทุกแถว, [ลำดับคอลัมน์]]
+                df = df.iloc[:, [47, 5, 3, 13]] 
+                
+                # ตั้งชื่อใหม่ให้ตรงกับที่เราใช้ในระบบ
+                df.columns = ['Related order ID', 'Total settlement amount', 'Order settled time', 'Total Fees']
+                
+                # แปลงค่าให้ถูกต้อง
+                df['Related order ID'] = df['Related order ID'].apply(str) # แปลงเป็นข้อความกัน Scientific notation
+                
+                income_dfs.append(df)
+            except Exception as e:
+                st.warning(f"⚠️ ข้ามไฟล์ {file_info['name']} เนื่องจากรูปแบบคอลัมน์ไม่ตรง: {e}")
     
     income_master = pd.DataFrame()
     if income_dfs:
@@ -87,10 +103,6 @@ def process_tiktok(order_files, income_files, shop_name):
             # Filter: Must have Shipped Time (Column AC)
             if 'Shipped Time' in df.columns:
                 df = df.dropna(subset=['Shipped Time'])
-                
-                # Column Mappings based on prompt
-                # A=Order ID, B=Order Status, G=Seller SKU, J=Quantity, P=SKU Subtotal After Discount, 
-                # Z=Created Time, AC=Shipped Time, AJ=Tracking ID
                 
                 cols_needed = {
                     'Order ID': 'order_id',
@@ -118,7 +130,6 @@ def process_tiktok(order_files, income_files, shop_name):
                 # Clean Order ID
                 df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                 
-                # Multi-item order handling for display (Keep raw rows but we merge income by OrderID)
                 all_orders.append(df)
 
     if not all_orders:
@@ -128,15 +139,12 @@ def process_tiktok(order_files, income_files, shop_name):
 
     # Merge with Income
     if not income_master.empty:
-        # Income is per Order, not per Item. We merge carefully.
-        # TikTok Income format: AV=Related order ID
         income_master = income_master.rename(columns={
             'Related order ID': 'order_id',
             'Total settlement amount': 'settlement_amount',
             'Order settled time': 'settlement_date',
             'Total Fees': 'fees'
         })
-        # Deduplicate Income Master (one row per order id)
         income_master = income_master.groupby('order_id').first().reset_index()
         
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
