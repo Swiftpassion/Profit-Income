@@ -414,11 +414,17 @@ if st.button("🚀 Sync Data from Google Drive"):
         if all_data:
             master_df = pd.concat(all_data, ignore_index=True)
             
+            # --- แก้ไข: จัดการค่า NaN (ค่าว่าง) ให้เป็น None เพื่อให้ส่งเข้า Supabase ได้ ---
+            # บรรทัดนี้จะเปลี่ยน NaN ทั้งหมดให้เป็น None (null)
+            master_df = master_df.where(pd.notnull(master_df), None)
+            # -------------------------------------------------------------------
+
             # Convert Date objects to strings for Supabase/JSON
             date_cols = ['created_date', 'shipped_date', 'paid_date', 'settlement_date']
             for col in date_cols:
                 if col in master_df.columns:
-                    master_df[col] = master_df[col].astype(str).replace('NaT', None)
+                    # ตรงนี้ต้องระวังไม่ให้แปลง None กลับเป็น string 'None'
+                    master_df[col] = master_df[col].apply(lambda x: str(x) if x is not None else None)
             
             # Upsert to Supabase
             st.info("Uploading to Database...")
@@ -429,8 +435,6 @@ if st.button("🚀 Sync Data from Google Drive"):
             for i in range(0, len(records), chunk_size):
                 chunk = records[i:i + chunk_size]
                 try:
-                    # 'upsert' works if you have a Primary Key set on 'order_id' + 'sku' (composite) or just 'order_id'
-                    # Make sure your Supabase table has a Primary Key!
                     supabase.table("orders").upsert(chunk).execute()
                 except Exception as e:
                     st.error(f"Error uploading chunk {i}: {e}")
