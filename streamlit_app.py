@@ -403,7 +403,7 @@ tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Das
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Filters
+    # 1. Filters (ส่วนกรองวันที่คงเดิม)
     col_filters = st.columns([1, 1, 1, 1])
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     today = datetime.datetime.now().date()
@@ -491,11 +491,14 @@ with tab_dash:
             for _, row in edited_ads.iterrows():
                 st.session_state.ads_data[str(row['วันที่'])] = {'ads': row['ค่า ADS'], 'roas': row['ROAS ADS']}
 
-            # Calculate
+            # Calculate Logic
             calc = final_df.copy()
             calc['manual_ads'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('ads', 0))
             calc['manual_roas'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('roas', 0))
 
+            # คำนวณจำนวนออเดอร์รวม
+            calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
+            
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
             calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
@@ -503,32 +506,49 @@ with tab_dash:
             def safe_div(a, b): return (a/b*100) if b > 0 else 0
             
             calc['ROAS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
-            calc['ค่าดำเนินการ'] = (calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']) * 10
+            calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # --- HTML GENERATION (Robust Fix) ---
+            # --- HTML GENERATION ---
             
-            # 1. Header
+            # CSS: บังคับหัวตารางตัวหนังสือสีดำเพื่อให้ตัดกับสีพื้นหลัง
+            st.markdown("""
+            <style>
+                table.report-table th { color: #000 !important; font-weight: 600; border-color: #bbb !important; }
+            </style>
+            """, unsafe_allow_html=True)
+
             html_parts = []
             html_parts.append("""
             <div class="custom-table-wrapper">
             <table class="report-table">
                 <thead>
                     <tr>
-                        <th style="min-width: 85px;">วันที่</th>
-                        <th>สำเร็จ</th><th>รอ</th><th>ตีกลับ</th><th>ยกเลิก</th>
-                        <th style="background-color: #2980b9;">ยอดขายรวม</th>
-                        <th style="background-color: #2980b9;">ROAS</th>
-                        <th>ทุนรวม</th><th>%ทุน</th>
-                        <th>ค่าธรรมเนียม</th><th>%ธ.</th>
-                        <th>Affiliate</th><th>%Aff</th>
-                        <th style="background-color: #27ae60;">กำไร</th><th>%กำไร</th>
-                        <th style="background-color: #d35400;">ค่า ADS</th>
-                        <th style="background-color: #d35400;">ROAS ADS</th>
-                        <th style="background-color: #d35400;">VAT 7%</th>
-                        <th style="background-color: #c0392b;">ค่าแอดรวม</th><th>%แอด</th>
-                        <th>ดำเนินการ</th><th>%ด.</th>
-                        <th style="background-color: #16a085; min-width: 120px;">กำไรสุทธิ</th><th>%สุทธิ</th>
+                        <th style="background-color: #C5CED9; min-width: 85px;">วันที่</th>
+                        <th style="background-color: #CAC8C8;">จำนวนออเดอร์</th>
+                        <th style="background-color: #CAC8C8;">ออเดอร์สำเร็จ</th>
+                        <th style="background-color: #CAC8C8;">รอดำเนินการ</th>
+                        <th style="background-color: #CAC8C8;">ตีกลับ</th>
+                        <th style="background-color: #CAC8C8;">ยกเลิก</th>
+                        <th style="background-color: #8FD2FB;">ยอดขายรวม</th>
+                        <th style="background-color: #8FD2FB;">ROAS</th>
+                        <th style="background-color: #8FD2FB;">ROAS ADS</th>
+                        <th style="background-color: #E2EFDA;">ทุนรวม</th>
+                        <th style="background-color: #E2EFDA;">%ทุนรวม</th>
+                        <th style="background-color: #FFF2CC;">ค่าธรรมเนียม</th>
+                        <th style="background-color: #FFF2CC;">%ค่าธรรมเนียม</th>
+                        <th style="background-color: #F8CBAD;">ค่าแอฟฟิลิเอต</th>
+                        <th style="background-color: #F8CBAD;">%ค่าแอฟฟิลิเอต</th>
+                        <th style="background-color: #81FB98;">กำไร</th>
+                        <th style="background-color: #81FB98;">%กำไร</th>
+                        <th style="background-color: #FD8F5D;">ค่าADS</th>
+                        <th style="background-color: #FF5B5B;">ADS VAT 7%</th>
+                        <th style="background-color: #FD8F5D;">ค่าแอดรวม</th>
+                        <th style="background-color: #C6E0B4;">%ค่าแอด</th>
+                        <th style="background-color: #D0CECE;">ค่าดำเนินการ</th>
+                        <th style="background-color: #D0CECE;">%ค่าดำเนินการ</th>
+                        <th style="background-color: #FF5B5B; min-width: 120px;">กำไรสุทธิ</th>
+                        <th style="background-color: #FF5B5B;">%กำไรสุทธิ</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -538,26 +558,26 @@ with tab_dash:
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
                 
-                # Logic ป้องกันหารด้วย 0 สำหรับ Bar Width
+                # Logic สร้าง Bar Chart
                 max_profit = calc['กำไรสุทธิ'].max()
                 if max_profit <= 0: max_profit = 1 
-                
                 bar_width = 0
-                if net_profit > 0:
-                    bar_width = min((net_profit / max_profit) * 100, 100)
+                if net_profit > 0: bar_width = min((net_profit / max_profit) * 100, 100)
                 
                 date_str = format_thai_date(r['created_date'])
 
-                # ⚠️ เขียน HTML แบบบรรทัดเดียว (Minified) เพื่อป้องกันการเพี้ยนของ Layout
+                # Row HTML (แบบ Compact บรรทัดเดียว)
                 row_html = f"""
                 <tr>
                     <td class="txt">{date_str}</td>
+                    <td class="num font-bold">{int(r['total_orders'])}</td>
                     <td class="num">{int(r['success_count'])}</td>
                     <td class="num">{int(r['pending_count'])}</td>
                     <td class="num">{int(r['return_count'])}</td>
                     <td class="num">{int(r['cancel_count'])}</td>
                     <td class="num font-bold">{sales:,.2f}</td>
                     <td class="num">{r['ROAS']:,.2f}</td>
+                    <td class="num">{r['manual_roas']:,.2f}</td>
                     <td class="num">{r['cost_sum']:,.2f}</td>
                     <td class="num">{safe_div(r['cost_sum'], sales):.1f}%</td>
                     <td class="num">{r['fees_sum']:,.2f}</td>
@@ -567,7 +587,6 @@ with tab_dash:
                     <td class="num font-bold text-green">{r['กำไร']:,.2f}</td>
                     <td class="num">{safe_div(r['กำไร'], sales):.1f}%</td>
                     <td class="num">{r['manual_ads']:,.2f}</td>
-                    <td class="num">{r['manual_roas']:,.2f}</td>
                     <td class="num">{r['ADS VAT 7%']:,.2f}</td>
                     <td class="num text-red">{r['ค่าแอดรวม']:,.2f}</td>
                     <td class="num">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
@@ -580,7 +599,7 @@ with tab_dash:
                     <td class="num">{safe_div(net_profit, sales):.1f}%</td>
                 </tr>"""
                 
-                # ลบ Newlines ออกเพื่อให้ String เป็นก้อนเดียวกันจริงๆ
+                # ลบ Newlines
                 html_parts.append(row_html.replace('\n', ''))
 
             html_parts.append("</tbody></table></div>")
