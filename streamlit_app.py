@@ -238,16 +238,24 @@ def process_tiktok(order_files, income_files, shop_name):
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     
-    # 1. Process Income
+    # 1. Process Income (เหมือนเดิม)
     income_dfs = []
     for file_info in income_files:
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
                 if 'csv' in file_info['name'].lower():
-                    df = pd.read_csv(f_data, dtype=str)
+                    # ลองอ่านแบบ UTF-8 ก่อน ถ้าไม่ได้ให้ลอง CP874 (ภาษาไทย)
+                    try:
+                        df = pd.read_csv(f_data, dtype=str, encoding='utf-8')
+                    except:
+                        f_data.seek(0)
+                        df = pd.read_csv(f_data, dtype=str, encoding='cp874')
                 else:
                     df = pd.read_excel(f_data, sheet_name='Income', header=5, dtype=str)
+                
+                # Clean Column Names
+                df.columns = df.columns.str.strip()
                 
                 rename_map = {
                     'หมายเลขคำสั่งซื้อ': 'order_id',
@@ -281,25 +289,67 @@ def process_shopee(order_files, income_files, shop_name):
         income_master = income_master[cols_to_keep] 
         income_master = income_master.drop_duplicates(subset=['order_id'])
 
-    # 2. Process Orders
+    # 2. Process Orders (จุดที่แก้!)
     for file_info in order_files:
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
+                df = pd.DataFrame()
+
+                # A. กรณีไฟล์ CSV (ตัวปัญหา)
                 if 'csv' in file_info['name'].lower():
-                    df = pd.read_csv(f_data, dtype=str)
+                    # ลองอ่านหลาย Encoding
+                    for enc in ['utf-8', 'cp874', 'utf-8-sig']:
+                        try:
+                            f_data.seek(0)
+                            # อ่านมาก่อน 1 รอบเพื่อหา Header
+                            temp_df = pd.read_csv(f_data, encoding=enc, dtype=str)
+                            
+                            # วนหาบรรทัดที่มีคำว่า "หมายเลขคำสั่งซื้อ"
+                            header_row = -1
+                            if 'หมายเลขคำสั่งซื้อ' in temp_df.columns:
+                                header_row = 0
+                            else:
+                                # ลองหาใน 20 บรรทัดแรก
+                                for i, row in temp_df.head(20).iterrows():
+                                    row_vals = row.astype(str).values
+                                    if any('หมายเลขคำสั่งซื้อ' in v for v in row_vals):
+                                        header_row = i + 1 # +1 เพราะ skiprows นับจาก 0
+                                        break
+                            
+                            # ถ้าเจอ Header ให้โหลดใหม่ด้วย skiprows ที่ถูกต้อง
+                            if header_row != -1:
+                                f_data.seek(0)
+                                df = pd.read_csv(f_data, encoding=enc, dtype=str, skiprows=header_row)
+                                break
+                        except:
+                            continue
+                
+                # B. กรณีไฟล์ Excel
                 else:
                     df = pd.read_excel(f_data, dtype=str)
+
+                # ถ้าหาไม่เจอ หรือไฟล์ว่าง ให้ข้าม
+                if df.empty:
+                    st.warning(f"⚠️ อ่านไฟล์ {file_info['name']} ไม่สำเร็จ (หาหัวข้อไม่เจอ)")
+                    continue
+
+                # C. จัดการชื่อคอลัมน์ (ลบเว้นวรรค)
+                df.columns = df.columns.str.strip()
                 
                 # --- [CRITICAL FILTER]: Paid Time Only ---
-                if 'เวลาการชำระสินค้า' in df.columns:
-                    df = df.dropna(subset=['เวลาการชำระสินค้า'])
-                    df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
+                target_col = 'เวลาการชำระสินค้า'
+                
+                if target_col in df.columns:
+                    # 1. กรองแถวที่ไม่มีเวลาชำระเงินออก
+                    df = df.dropna(subset=[target_col])
+                    # 2. กรองค่าว่างที่เป็น text
+                    df = df[df[target_col].astype(str).str.strip() != '']
                     
                     cols_needed = {
                         'หมายเลขคำสั่งซื้อ': 'order_id',
                         'สถานะการสั่งซื้อ': 'status',
-                        'เวลาการชำระสินค้า': 'shipped_date',
+                        'เวลาการชำระสินค้า': 'shipped_date', # Column H
                         'เลขอ้างอิง SKU (SKU Reference No.)': 'sku',
                         'จำนวน': 'quantity',
                         'ราคาขายสุทธิ': 'sales_amount',
@@ -307,19 +357,26 @@ def process_shopee(order_files, income_files, shop_name):
                         'วันที่ทำการสั่งซื้อ': 'created_date'
                     }
                     
+                    # เลือกเฉพาะคอลัมน์ที่มี
                     available_cols = [c for c in cols_needed.keys() if c in df.columns]
                     df = df[available_cols].rename(columns=cols_needed)
 
                     df['shop_name'] = shop_name
                     df['platform'] = 'SHOPEE'
                     
+                    # Clean Date & Data
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
-                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     df = clean_text(df, 'sku') 
                     
                     all_orders.append(df)
+                else:
+                    # ถ้าหาคอลัมน์ไม่เจอจริงๆ ให้ลองปริ้นท์ออกมาดู (Debug)
+                    if st.session_state.get('debug_mode', False):
+                        st.write(f"❌ ไฟล์ {file_info['name']} ไม่พบคอลัมน์ '{target_col}'")
+                        st.write("คอลัมน์ที่พบ:", list(df.columns))
+
             except Exception as e:
                 st.warning(f"Shopee Order Error {file_info['name']}: {e}")
 
@@ -332,7 +389,7 @@ def process_shopee(order_files, income_files, shop_name):
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
 
-    # [NEW] Apply Standard Status
+    # Apply Standard Status
     if 'settlement_amount' not in final_df.columns:
         final_df['settlement_amount'] = 0
     final_df['status'] = final_df.apply(get_standard_status, axis=1)
