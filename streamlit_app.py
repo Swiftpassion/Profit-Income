@@ -309,7 +309,7 @@ with st.sidebar:
     
     # --- ✅ เพิ่มปุ่ม Link ไปยัง Google Drive ตรงนี้ครับ ---
     st.link_button(
-        "📂 ไปยัง ไดร์ฟข้อมูล (Google Drive)", 
+        "📂 ไปยังไดร์ฟข้อมูล", 
         "https://drive.google.com/drive/folders/1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot", 
         use_container_width=True
     )
