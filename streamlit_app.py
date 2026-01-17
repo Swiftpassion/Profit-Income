@@ -618,16 +618,14 @@ with tab_dash:
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
     
-    # 1. Filters (Copy มาจากหน้า Dashboard เพื่อให้เหมือนกัน)
+    # 1. Filters
     col_filters_ads = st.columns([1, 1, 1, 1])
-    # ใช้ key ต่างกันเล็กน้อยเพื่อไม่ให้ตีกัน (ads_year, ads_month)
     
     with col_filters_ads[0]: 
         sel_year_ads = st.selectbox("ปี", [2024, 2025, 2026], index=1, key="ads_year")
     with col_filters_ads[1]: 
         sel_month_ads = st.selectbox("เดือน", thai_months, index=today.month-1, key="ads_month")
     
-    # คำนวณวันที่เริ่มต้น-สิ้นสุด อัตโนมัติจาก ปี/เดือน ที่เลือก
     try:
         m_idx_ads = thai_months.index(sel_month_ads) + 1
         _, days_ads = calendar.monthrange(sel_year_ads, m_idx_ads)
@@ -640,11 +638,8 @@ with tab_ads:
     with col_filters_ads[2]: d_start_ads = st.date_input("วันที่เริ่ม", d_start_ads, key="ads_d_start")
     with col_filters_ads[3]: d_end_ads = st.date_input("ถึงวันที่", d_end_ads, key="ads_d_end")
 
-    st.info(f"📅 กำลังบันทึกข้อมูลช่วงวันที่: {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
-
-    # 2. Load Existing Ads & Create Editor
+    # 2. Data Preparation
     try:
-        # ดึงข้อมูลเก่ามาโชว์
         ads_res = supabase.table("daily_ads").select("*").gte("date", str(d_start_ads)).lte("date", str(d_end_ads)).execute()
         db_ads = pd.DataFrame(ads_res.data)
         if not db_ads.empty:
@@ -652,7 +647,6 @@ with tab_ads:
             db_ads = db_ads.set_index('date')
     except: db_ads = pd.DataFrame()
 
-    # สร้างตารางเปล่าตามช่วงวันที่
     date_range_ads = pd.date_range(start=d_start_ads, end=d_end_ads)
     editor_data = []
     
@@ -660,15 +654,25 @@ with tab_ads:
         d_date = d.date()
         current_ads = 0.0
         current_roas = 0.0
-        # เติมค่าเดิมถ้ามี
         if not db_ads.empty and d_date in db_ads.index:
             current_ads = float(db_ads.loc[d_date, 'ads_amount'])
             current_roas = float(db_ads.loc[d_date, 'roas_ads'])
-            
         editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS ADS': current_roas})
 
-    # แสดงตารางให้กรอก
+    st.markdown("---")
+    
+    # ==================================================
+    # 🔘 ปุ่มบันทึก (ย้ายมาไว้ด้านบน)
+    # ==================================================
+    col_btn, col_info = st.columns([2, 5])
+    with col_btn:
+        save_ads_clicked = st.button("💾 บันทึกข้อมูลค่า ADS", type="primary", use_container_width=True)
+    with col_info:
+        st.info(f"📅 ช่วงวันที่: {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
+
     st.markdown("##### 📝 กรอกข้อมูลลงในตารางด้านล่าง")
+    
+    # ตาราง Data Editor (Height 1200)
     edited_df = st.data_editor(
         pd.DataFrame(editor_data),
         column_config={
@@ -679,12 +683,12 @@ with tab_ads:
         hide_index=True,
         num_rows="fixed",
         use_container_width=True,
-        height=400, # สูงขึ้นเพื่อให้กรอกง่าย
+        height=1200, 
         key="ads_editor_tab"
     )
 
-    # ปุ่มบันทึก
-    if st.button("💾 บันทึกข้อมูลค่า ADS", type="primary", use_container_width=True):
+    # Logic บันทึก (ทำงานเมื่อปุ่มด้านบนถูกกด)
+    if save_ads_clicked:
         upsert_data = []
         for _, row in edited_df.iterrows():
             upsert_data.append({
@@ -694,7 +698,7 @@ with tab_ads:
             })
         try:
             supabase.table("daily_ads").upsert(upsert_data).execute()
-            st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว!")
+            st.toast("✅ บันทึกข้อมูลเรียบร้อยแล้ว!", icon="💾")
         except Exception as e:
             st.error(f"เกิดข้อผิดพลาด: {e}")
 
@@ -708,6 +712,14 @@ with tab_cost:
         
         display_df = cur_data[['sku', 'unit_cost', 'platform']].copy()
         
+        # ==================================================
+        # 🔘 ปุ่มบันทึก (ย้ายมาไว้ด้านบน)
+        # ==================================================
+        col_c_btn, _ = st.columns([1, 4])
+        with col_c_btn:
+            save_cost_clicked = st.button("💾 บันทึกต้นทุนสินค้า", type="primary", use_container_width=True)
+        
+        # ตาราง Data Editor (Height 1000)
         edited = st.data_editor(
             display_df,
             column_config={
@@ -717,16 +729,18 @@ with tab_cost:
             },
             hide_index=True,
             num_rows="dynamic",
-            use_container_width=True
+            use_container_width=True,
+            height=1000
         )
         
-        if st.button("💾 บันทึกต้นทุนสินค้า"):
+        # Logic บันทึก (ทำงานเมื่อปุ่มด้านบนถูกกด)
+        if save_cost_clicked:
             if not edited.empty:
                 edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
                 supabase.table("product_costs").delete().neq("id", 0).execute()
                 supabase.table("product_costs").insert(edited.to_dict('records')).execute()
-                st.success("บันทึกสำเร็จ!")
-                st.rerun()
+                st.success("✅ บันทึกต้นทุนสำเร็จ!")
+                # st.rerun() # เปิดบรรทัดนี้ถ้าต้องการให้โหลดหน้าใหม่ทันที
     except Exception as e: st.error(f"Error Cost: {e}")
 
 # --- TAB 3: OLD TABLE ---
