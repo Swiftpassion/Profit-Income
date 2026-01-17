@@ -414,27 +414,56 @@ with tab1:
     st.divider()
     st.subheader("📊 สรุปยอดขาย (Summary)")
     try:
+        # ดึงข้อมูลจาก Supabase มาแสดง
         response = supabase.table("orders").select("*").execute()
         db_df = pd.DataFrame(response.data)
+        
         if not db_df.empty:
+            # แปลงตัวเลขให้เป็นชนิด number เพื่อคำนวณ
             for col in ['sales_amount', 'settlement_amount', 'fees', 'affiliate', 'total_cost', 'net_profit']:
                 if col in db_df.columns:
                     db_df[col] = pd.to_numeric(db_df[col], errors='coerce').fillna(0)
 
+            # 1. แสดงการ์ดตัวเลขสรุป
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("ยอดขายรวม", f"{db_df['sales_amount'].sum():,.2f}")
             c2.metric("ยอดเงินเข้าจริง", f"{db_df['settlement_amount'].sum():,.2f}")
-            c3.metric("ต้นทุนสินค้า", f"{db_df['total_cost'].sum():,.2f}") if 'total_cost' in db_df.columns else None
-            c4.metric("กำไรสุทธิ", f"{db_df['net_profit'].sum():,.2f}") if 'net_profit' in db_df.columns else None
+            
+            cost_sum = db_df['total_cost'].sum() if 'total_cost' in db_df.columns else 0
+            c3.metric("ต้นทุนสินค้า", f"{cost_sum:,.2f}")
+            
+            profit_sum = db_df['net_profit'].sum() if 'net_profit' in db_df.columns else 0
+            c4.metric("กำไรสุทธิ", f"{profit_sum:,.2f}")
             
             aff_sum = db_df['affiliate'].sum() if 'affiliate' in db_df.columns else 0
             c5.metric("ค่า Affiliate", f"{aff_sum:,.2f}")
             
-            st.write("ยอดขายแยกตามแพลตฟอร์ม")
+            # 2. แสดงกราฟ
+            st.write("📈 **ยอดขายแยกตามแพลตฟอร์ม**")
             if 'platform' in db_df.columns and 'sales_amount' in db_df.columns:
                 st.bar_chart(db_df.groupby('platform')['sales_amount'].sum())
-    except:
-        st.info("รอข้อมูลจากการ Sync...")
+
+            # 3. [เพิ่มใหม่] แสดงตารางข้อมูลละเอียด
+            st.write("📄 **รายการคำสั่งซื้อทั้งหมด**")
+            
+            # จัดเรียงคอลัมน์ให้ดูง่ายขึ้น (เลือกเฉพาะที่จำเป็น)
+            show_cols = [
+                'order_id', 'platform', 'shop_name', 'sku', 'sales_amount', 
+                'settlement_amount', 'total_cost', 'net_profit', 'status'
+            ]
+            # กรองเอาเฉพาะคอลัมน์ที่มีอยู่จริง
+            existing_cols = [c for c in show_cols if c in db_df.columns]
+            
+            st.dataframe(
+                db_df[existing_cols], 
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("ยังไม่มีข้อมูลในระบบ กดปุ่ม Sync ด้านบนเพื่อดึงข้อมูล")
+            
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาดในการโหลดข้อมูล: {e}")
 
 with tab2:
     # เรียกใช้ฟังก์ชันจัดการต้นทุนตรงนี้
