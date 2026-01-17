@@ -194,22 +194,25 @@ def process_tiktok(order_files, income_files, shop_name):
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     
-    # 1. Process Income
+    # ==========================================
+    # 1. Process Income Files (CSV & Excel)
+    # ==========================================
     income_dfs = []
     for file_info in income_files:
-        # Check for both Excel and CSV
-        if 'xls' in file_info['name'] or 'csv' in file_info['name']:
+        # Check for Excel (.xls, .xlsx) and CSV
+        if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
                 
-                # Conditional Load: CSV vs Excel
+                # A. Loader Logic: CSV vs Excel
                 if 'csv' in file_info['name'].lower():
-                    # Shopee CSVs are usually raw tables, so we read directly
+                    # CSVs are usually raw text without header offset
                     df = pd.read_csv(f_data, dtype=str)
                 else:
-                    # Shopee Excel reports often have 5 header rows of metadata
+                    # Excel reports usually have 5 header rows of metadata
                     df = pd.read_excel(f_data, sheet_name='Income', header=5, dtype=str)
                 
+                # B. Rename Columns
                 rename_map = {
                     'หมายเลขคำสั่งซื้อ': 'order_id',
                     'วันที่โอนชำระเงินสำเร็จ': 'settlement_date',
@@ -221,6 +224,7 @@ def process_shopee(order_files, income_files, shop_name):
                 existing_cols = [c for c in rename_map.keys() if c in df.columns]
                 df = df[existing_cols].rename(columns=rename_map)
                 
+                # C. Calculate Fees
                 for col in ['original_price', 'settlement_amount', 'affiliate']:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -239,53 +243,73 @@ def process_shopee(order_files, income_files, shop_name):
         income_master = pd.concat(income_dfs, ignore_index=True)
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
         
-        # [FIX] Keep ONLY valid columns to prevent 'original_price' error later
+        # [CRITICAL FIX] Filter columns strictly to avoid 'original_price' DB error
         cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
         cols_to_keep = [c for c in cols_to_keep if c in income_master.columns]
         income_master = income_master[cols_to_keep] 
         
+        # Deduplicate Income (One row per Order ID)
         income_master = income_master.drop_duplicates(subset=['order_id'])
 
-    # 2. Process Orders
+    # ==========================================
+    # 2. Process Order Files
+    # ==========================================
     for file_info in order_files:
-        if 'xlsx' in file_info['name']:
-            f_data = download_file(file_info['id'])
-            df = pd.read_excel(f_data, dtype=str)
-            
-            if 'เวลาการชำระสินค้า' in df.columns:
-                df = df.dropna(subset=['เวลาการชำระสินค้า'])
+        # Support both .xls and .xlsx for Orders
+        if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
+            try:
+                f_data = download_file(file_info['id'])
                 
-                cols_needed = {
-                    'หมายเลขคำสั่งซื้อ': 'order_id',
-                    'สถานะการสั่งซื้อ': 'status',
-                    'เวลาการชำระสินค้า': 'shipped_date',
-                    'เลขอ้างอิง SKU (SKU Reference No.)': 'sku',
-                    'จำนวน': 'quantity',
-                    'ราคาขายสุทธิ': 'sales_amount',
-                    '*หมายเลขติดตามพัสดุ': 'tracking_id',
-                    'วันที่ทำการสั่งซื้อ': 'created_date'
-                }
+                # Load Data
+                if 'csv' in file_info['name'].lower():
+                    df = pd.read_csv(f_data, dtype=str)
+                else:
+                    df = pd.read_excel(f_data, dtype=str)
                 
-                available_cols = [c for c in cols_needed.keys() if c in df.columns]
-                df = df[available_cols].rename(columns=cols_needed)
+                # Filter valid rows
+                if 'เวลาการชำระสินค้า' in df.columns:
+                    df = df.dropna(subset=['เวลาการชำระสินค้า'])
+                    
+                    cols_needed = {
+                        'หมายเลขคำสั่งซื้อ': 'order_id',
+                        'สถานะการสั่งซื้อ': 'status',
+                        'เวลาการชำระสินค้า': 'shipped_date',
+                        'เลขอ้างอิง SKU (SKU Reference No.)': 'sku',
+                        'จำนวน': 'quantity',
+                        'ราคาขายสุทธิ': 'sales_amount',
+                        '*หมายเลขติดตามพัสดุ': 'tracking_id',
+                        'วันที่ทำการสั่งซื้อ': 'created_date'
+                    }
+                    
+                    available_cols = [c for c in cols_needed.keys() if c in df.columns]
+                    df = df[available_cols].rename(columns=cols_needed)
 
-                df['shop_name'] = shop_name
-                df['platform'] = 'SHOPEE'
-                df = clean_date(df, 'created_date')
-                df = clean_date(df, 'shipped_date')
-                df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                df = clean_text(df, 'sku') 
-                
-                all_orders.append(df)
+                    df['shop_name'] = shop_name
+                    df['platform'] = 'SHOPEE'
+                    
+                    # Clean Data
+                    df = clean_date(df, 'created_date')
+                    df = clean_date(df, 'shipped_date')
+                    df['order_id'] = df['order_id'].apply(clean_scientific_notation)
+                    df = clean_text(df, 'sku') 
+                    
+                    all_orders.append(df)
+            except Exception as e:
+                st.warning(f"Shopee Order Error {file_info['name']}: {e}")
 
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
     
+    # [CRITICAL FIX] Strict Deduplication for Orders (Order ID + SKU)
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
+    # ==========================================
+    # 3. Merge Income & Return
+    # ==========================================
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
+        
     return final_df
 
 # --- PROCESSOR: LAZADA ---
