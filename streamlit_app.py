@@ -399,13 +399,13 @@ with st.sidebar:
 
 tab_dash, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
-# --- TAB 1: DASHBOARD (HTML Table) ---
-# --- TAB 1: DASHBOARD (HTML Table) ---
-# --- TAB 1: DASHBOARD (HTML Table) ---
+# --- TAB 1: DASHBOARD (แสดงผลอย่างเดียว ไม่มีการกรอกข้อมูล) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Filters (เหมือนเดิม)
+    # ==========================================
+    # 1. FILTERS (ส่วนกรองวันที่ - คงเดิม)
+    # ==========================================
     col_filters = st.columns([1, 1, 1, 1])
     
     if "d_start" not in st.session_state:
@@ -438,22 +438,30 @@ with tab_dash:
         if shopee_check: sel_plats.append('SHOPEE')
         if lazada_check: sel_plats.append('LAZADA')
 
-    # Data Processing
+    # ==========================================
+    # 2. DATA PROCESSING (ดึงข้อมูลและคำนวณ)
+    # ==========================================
     try:
-        # 1. ดึง Order Data
+        # A. ดึงข้อมูลออเดอร์ (Orders)
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
         
-        # 2. ดึง ADS Data จาก Database (แทนการดึงจาก Editor)
-        ads_res = supabase.table("daily_ads").select("*").gte("date", str(st.session_state.d_start)).lte("date", str(st.session_state.d_end)).execute()
-        ads_db = pd.DataFrame(ads_res.data)
-        if not ads_db.empty:
-            ads_db.columns = ['created_date', 'manual_ads', 'manual_roas', 'updated_at'] # Rename ให้ตรง
-            ads_db['created_date'] = pd.to_datetime(ads_db['created_date']).dt.date
-            ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
-            ads_db['manual_roas'] = pd.to_numeric(ads_db['manual_roas'], errors='coerce').fillna(0)
-            ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']] # เอาแค่ที่ใช้
-        
+        # B. ดึงข้อมูลค่าโฆษณา (ADS) จาก Database (ดึงมาใช้อย่างเดียว ไม่ต้องให้แก้)
+        ads_db = pd.DataFrame()
+        try:
+            ads_res = supabase.table("daily_ads").select("*").gte("date", str(st.session_state.d_start)).lte("date", str(st.session_state.d_end)).execute()
+            ads_temp = pd.DataFrame(ads_res.data)
+            if not ads_temp.empty:
+                # เปลี่ยนชื่อ Column ให้ตรงกับ Logic คำนวณเดิม
+                # Database: date, ads_amount, roas_ads -> Logic: created_date, manual_ads, manual_roas
+                ads_db = ads_temp.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
+                ads_db['created_date'] = pd.to_datetime(ads_db['created_date']).dt.date
+                ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
+                ads_db['manual_roas'] = pd.to_numeric(ads_db['manual_roas'], errors='coerce').fillna(0)
+                ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']]
+        except: pass
+
+        # C. ประมวลผลและรวมตาราง
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
             mask = (raw_df['created_date'] >= st.session_state.d_start) & (raw_df['created_date'] <= st.session_state.d_end)
@@ -463,9 +471,11 @@ with tab_dash:
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
+            # สร้างโครงวันที่ให้ครบ (Master Date)
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
             
+            # รวมยอดขายรายวัน
             daily = df.groupby('created_date').agg(
                 success_count=('status', lambda x: (x == 'ออเดอร์สำเร็จ').sum()),
                 pending_count=('status', lambda x: (x == 'รอดำเนินการ').sum()),
@@ -477,13 +487,18 @@ with tab_dash:
                 affiliate_sum=('affiliate', 'sum')
             ).reset_index()
             
-            # Merge 1: Date Master + Order Data
+            # Merge 1: เอาวันที่ตั้ง แล้วแปะยอดขาย
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
-            # Merge 2: + ADS Data (Left Join)
-            final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
+            # Merge 2: เอาข้อมูล ADS มาแปะ (Left Join)
+            if not ads_db.empty:
+                final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
+            else:
+                final_df = step1.copy()
+                final_df['manual_ads'] = 0
+                final_df['manual_roas'] = 0
 
-            # Calculate Logic
+            # D. คำนวณกำไรสุทธิ (Calculation Logic)
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             
@@ -497,7 +512,9 @@ with tab_dash:
             calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # --- HTML GENERATION (โค้ดเดิมเป๊ะ) ---
+            # ==========================================
+            # 3. HTML GENERATION (แสดงตาราง)
+            # ==========================================
             st.markdown("""
             <style>
                 table.report-table th { color: #000 !important; font-weight: 600; border-color: #bbb !important; }
@@ -540,6 +557,7 @@ with tab_dash:
                 <tbody>
             """)
 
+            # สีพื้นหลัง
             c_date = "#C5CED9"; c_order = "#CAC8C8"; c_sales = "#DDEBF7"; c_cost = "#E2EFDA"
             c_fee = "#FFF2CC"; c_aff = "#F8CBAD"; c_profit = "#FCE4D6"
             c_ads = "#B4C6E7"; c_ads_total = "#C6E0B4"; c_ops = "#D0CECE"; c_net = "#F4B084"
@@ -547,10 +565,13 @@ with tab_dash:
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
+                
+                # Logic Bar Width
                 max_profit = calc['กำไรสุทธิ'].max()
                 if max_profit <= 0: max_profit = 1 
                 bar_width = 0
                 if net_profit > 0: bar_width = min((net_profit / max_profit) * 100, 100)
+                
                 date_str = format_thai_date(r['created_date'])
 
                 row_html = f"""
