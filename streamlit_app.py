@@ -397,7 +397,7 @@ with st.sidebar:
 # MAIN CONTENT
 # ==========================================
 
-tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
+tab_dash, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
 # --- TAB 1: DASHBOARD (HTML Table) ---
 # --- TAB 1: DASHBOARD (HTML Table) ---
@@ -405,10 +405,8 @@ tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Das
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Filters (คงเดิม)
+    # 1. Filters (เหมือนเดิม)
     col_filters = st.columns([1, 1, 1, 1])
-    thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
-    today = datetime.datetime.now().date()
     
     if "d_start" not in st.session_state:
         st.session_state.d_start = today.replace(day=1)
@@ -442,8 +440,19 @@ with tab_dash:
 
     # Data Processing
     try:
+        # 1. ดึง Order Data
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
+        
+        # 2. ดึง ADS Data จาก Database (แทนการดึงจาก Editor)
+        ads_res = supabase.table("daily_ads").select("*").gte("date", str(st.session_state.d_start)).lte("date", str(st.session_state.d_end)).execute()
+        ads_db = pd.DataFrame(ads_res.data)
+        if not ads_db.empty:
+            ads_db.columns = ['created_date', 'manual_ads', 'manual_roas', 'updated_at'] # Rename ให้ตรง
+            ads_db['created_date'] = pd.to_datetime(ads_db['created_date']).dt.date
+            ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
+            ads_db['manual_roas'] = pd.to_numeric(ads_db['manual_roas'], errors='coerce').fillna(0)
+            ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']] # เอาแค่ที่ใช้
         
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
@@ -468,37 +477,14 @@ with tab_dash:
                 affiliate_sum=('affiliate', 'sum')
             ).reset_index()
             
-            final_df = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
-
-            # Ads Input
-            if "ads_data" not in st.session_state: st.session_state.ads_data = {}
+            # Merge 1: Date Master + Order Data
+            step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
-            editor_data = []
-            for _, row in final_df.iterrows():
-                d_str = str(row['created_date'])
-                saved = st.session_state.ads_data.get(d_str, {'ads': 0.0, 'roas': 0.0})
-                editor_data.append({'วันที่': row['created_date'], 'ค่า ADS': saved['ads'], 'ROAS ADS': saved['roas']})
-            
-            st.markdown("##### 📝 กรอกค่าโฆษณา (Ads)")
-            edited_ads = st.data_editor(
-                pd.DataFrame(editor_data),
-                column_config={
-                    "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
-                    "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, required=True),
-                    "ROAS ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, required=True)
-                },
-                hide_index=True, num_rows="fixed", height=200, use_container_width=True
-            )
+            # Merge 2: + ADS Data (Left Join)
+            final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
 
-            for _, row in edited_ads.iterrows():
-                st.session_state.ads_data[str(row['วันที่'])] = {'ads': row['ค่า ADS'], 'roas': row['ROAS ADS']}
-
-            # Calculate
+            # Calculate Logic
             calc = final_df.copy()
-            calc['manual_ads'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('ads', 0))
-            calc['manual_roas'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('roas', 0))
-
-            # New Calculation: Total Orders
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
@@ -511,9 +497,7 @@ with tab_dash:
             calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # --- HTML GENERATION (Updated) ---
-            
-            # CSS ปรับ Header Text Color เป็นสีดำ
+            # --- HTML GENERATION (โค้ดเดิมเป๊ะ) ---
             st.markdown("""
             <style>
                 table.report-table th { color: #000 !important; font-weight: 600; border-color: #bbb !important; }
@@ -556,32 +540,19 @@ with tab_dash:
                 <tbody>
             """)
 
-            # กำหนดสีพื้นหลัง
-            c_date = "#C5CED9"
-            c_order = "#CAC8C8"
-            c_sales = "#DDEBF7"
-            c_cost = "#E2EFDA"
-            c_fee = "#FFF2CC"
-            c_aff = "#F8CBAD"
-            c_profit = "#FCE4D6"
-            c_ads = "#B4C6E7"
-            c_ads_total = "#C6E0B4"
-            c_ops = "#D0CECE"
-            c_net = "#F4B084"
+            c_date = "#C5CED9"; c_order = "#CAC8C8"; c_sales = "#DDEBF7"; c_cost = "#E2EFDA"
+            c_fee = "#FFF2CC"; c_aff = "#F8CBAD"; c_profit = "#FCE4D6"
+            c_ads = "#B4C6E7"; c_ads_total = "#C6E0B4"; c_ops = "#D0CECE"; c_net = "#F4B084"
 
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
-                
-                # Logic Bar Width
                 max_profit = calc['กำไรสุทธิ'].max()
                 if max_profit <= 0: max_profit = 1 
                 bar_width = 0
                 if net_profit > 0: bar_width = min((net_profit / max_profit) * 100, 100)
-                
                 date_str = format_thai_date(r['created_date'])
 
-                # เพิ่ม text-align: center; ลงใน style ของทุก <td>
                 row_html = f"""
                 <tr>
                     <td class="txt" style="background-color: {c_date}; text-align: center;">{date_str}</td>
@@ -618,8 +589,91 @@ with tab_dash:
             html_parts.append("</tbody></table></div>")
             st.markdown("".join(html_parts), unsafe_allow_html=True)
             
-        else: st.info("ไม่พบข้อมูล")
-    except Exception as e: st.error(f"Error: {e}")
+        else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
+    except Exception as e: st.error(f"Error Processing: {e}")
+
+with tab_ads:
+    st.header("📢 บันทึกค่าโฆษณา (ADS)")
+    
+    # 1. Filters (Copy มาจากหน้า Dashboard เพื่อให้เหมือนกัน)
+    col_filters_ads = st.columns([1, 1, 1, 1])
+    # ใช้ key ต่างกันเล็กน้อยเพื่อไม่ให้ตีกัน (ads_year, ads_month)
+    
+    with col_filters_ads[0]: 
+        sel_year_ads = st.selectbox("ปี", [2024, 2025, 2026], index=1, key="ads_year")
+    with col_filters_ads[1]: 
+        sel_month_ads = st.selectbox("เดือน", thai_months, index=today.month-1, key="ads_month")
+    
+    # คำนวณวันที่เริ่มต้น-สิ้นสุด อัตโนมัติจาก ปี/เดือน ที่เลือก
+    try:
+        m_idx_ads = thai_months.index(sel_month_ads) + 1
+        _, days_ads = calendar.monthrange(sel_year_ads, m_idx_ads)
+        d_start_ads = date(sel_year_ads, m_idx_ads, 1)
+        d_end_ads = date(sel_year_ads, m_idx_ads, days_ads)
+    except:
+        d_start_ads = today.replace(day=1)
+        d_end_ads = today
+
+    with col_filters_ads[2]: d_start_ads = st.date_input("วันที่เริ่ม", d_start_ads, key="ads_d_start")
+    with col_filters_ads[3]: d_end_ads = st.date_input("ถึงวันที่", d_end_ads, key="ads_d_end")
+
+    st.info(f"📅 กำลังบันทึกข้อมูลช่วงวันที่: {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
+
+    # 2. Load Existing Ads & Create Editor
+    try:
+        # ดึงข้อมูลเก่ามาโชว์
+        ads_res = supabase.table("daily_ads").select("*").gte("date", str(d_start_ads)).lte("date", str(d_end_ads)).execute()
+        db_ads = pd.DataFrame(ads_res.data)
+        if not db_ads.empty:
+            db_ads['date'] = pd.to_datetime(db_ads['date']).dt.date
+            db_ads = db_ads.set_index('date')
+    except: db_ads = pd.DataFrame()
+
+    # สร้างตารางเปล่าตามช่วงวันที่
+    date_range_ads = pd.date_range(start=d_start_ads, end=d_end_ads)
+    editor_data = []
+    
+    for d in date_range_ads:
+        d_date = d.date()
+        current_ads = 0.0
+        current_roas = 0.0
+        # เติมค่าเดิมถ้ามี
+        if not db_ads.empty and d_date in db_ads.index:
+            current_ads = float(db_ads.loc[d_date, 'ads_amount'])
+            current_roas = float(db_ads.loc[d_date, 'roas_ads'])
+            
+        editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS ADS': current_roas})
+
+    # แสดงตารางให้กรอก
+    st.markdown("##### 📝 กรอกข้อมูลลงในตารางด้านล่าง")
+    edited_df = st.data_editor(
+        pd.DataFrame(editor_data),
+        column_config={
+            "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
+            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100),
+            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)
+        },
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        height=400, # สูงขึ้นเพื่อให้กรอกง่าย
+        key="ads_editor_tab"
+    )
+
+    # ปุ่มบันทึก
+    if st.button("💾 บันทึกข้อมูลค่า ADS", type="primary", use_container_width=True):
+        upsert_data = []
+        for _, row in edited_df.iterrows():
+            upsert_data.append({
+                "date": str(row['วันที่']),
+                "ads_amount": row['ค่า ADS'],
+                "roas_ads": row['ROAS ADS']
+            })
+        try:
+            supabase.table("daily_ads").upsert(upsert_data).execute()
+            st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว!")
+        except Exception as e:
+            st.error(f"เกิดข้อผิดพลาด: {e}")
 
 # --- TAB 2: MASTER COST ---
 with tab_cost:
