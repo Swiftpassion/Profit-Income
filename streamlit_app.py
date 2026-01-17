@@ -19,11 +19,9 @@ st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Kanit', sans-serif;
-    }
+    html, body, [class*="css"] { font-family: 'Kanit', sans-serif; }
 
-    /* Container สำหรับตารางที่เลื่อนซ้ายขวาได้ */
+    /* Container */
     .custom-table-wrapper {
         overflow-x: auto;
         border: 1px solid #ddd;
@@ -33,49 +31,44 @@ st.markdown("""
         background-color: white;
     }
     
-    /* ตัวตาราง */
+    /* Table */
     table.report-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1800px; /* บังคับกว้างเพื่อให้ Scroll ได้ */
+        min-width: 1500px; /* ลดความกว้างลงเล็กน้อยถ้าไม่จำเป็นต้องกว้างมาก */
         font-size: 13px;
     }
     
-    /* หัวตาราง (Sticky Header) */
+    /* Header */
     table.report-table th {
         background-color: #2c3e50;
         color: white;
-        padding: 10px 5px;
+        padding: 8px 5px; /* ลด Padding */
         text-align: center;
-        font-weight: 500;
         border: 1px solid #34495e;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        white-space: nowrap; /* ห้ามตัดบรรทัด */
+        position: sticky; top: 0; z-index: 100;
+        white-space: nowrap;
     }
     
-    /* เซลล์ข้อมูล */
+    /* Cells */
     table.report-table td {
-        padding: 8px 5px;
+        padding: 4px 6px; /* ⚠️ ปรับให้แคบลง (บนล่าง 4px, ซ้ายขวา 6px) */
         border: 1px solid #e0e0e0;
         color: #333;
         vertical-align: middle;
+        height: 35px; /* ⚠️ บังคับความสูงขั้นต่ำให้เท่ากัน */
     }
 
-    /* สีพื้นหลังสลับบรรทัด */
     table.report-table tr:nth-child(even) { background-color: #f9f9f9; }
-    table.report-table tr:hover { background-color: #f0f8ff; transition: 0.2s; }
+    table.report-table tr:hover { background-color: #f0f8ff; }
 
-    /* จัดแนวตัวเลขและข้อความ */
     .num { text-align: right; font-family: 'Courier New', monospace; font-weight: 600; }
-    .txt { text-align: center; }
+    .txt { text-align: center; white-space: nowrap; } /* เพิ่ม nowrap ให้วันที่ */
     
-    /* Progress Bar ใน HTML */
-    .p-bg { background-color: #eee; border-radius: 3px; width: 100%; height: 6px; margin-top: 4px; }
-    .p-fill { background-color: #27ae60; height: 100%; border-radius: 3px; }
+    /* Progress Bar Compact */
+    .p-bg { background-color: #eee; border-radius: 2px; width: 100%; height: 4px; margin-top: 2px; display: block;} /* ลดขนาด */
+    .p-fill { background-color: #27ae60; height: 100%; border-radius: 2px; }
     
-    /* Utility Classes สำหรับสีตัวอักษร */
     .text-green { color: #27ae60; }
     .text-red { color: #c0392b; }
     .text-teal { color: #16a085; }
@@ -522,35 +515,40 @@ with tab_dash:
             <table class="report-table">
                 <thead>
                     <tr>
-                        <th style="min-width: 100px;">วันที่</th>
+                        <th style="min-width: 85px;">วันที่</th>
                         <th>สำเร็จ</th><th>รอ</th><th>ตีกลับ</th><th>ยกเลิก</th>
                         <th style="background-color: #2980b9;">ยอดขายรวม</th>
                         <th style="background-color: #2980b9;">ROAS</th>
                         <th>ทุนรวม</th><th>%ทุน</th>
-                        <th>ค่าธรรมเนียม</th><th>%ธรรมเนียม</th>
+                        <th>ค่าธรรมเนียม</th><th>%ธ.</th>
                         <th>Affiliate</th><th>%Aff</th>
                         <th style="background-color: #27ae60;">กำไร</th><th>%กำไร</th>
                         <th style="background-color: #d35400;">ค่า ADS</th>
                         <th style="background-color: #d35400;">ROAS ADS</th>
                         <th style="background-color: #d35400;">VAT 7%</th>
                         <th style="background-color: #c0392b;">ค่าแอดรวม</th><th>%แอด</th>
-                        <th>ค่าดำเนินการ</th><th>%ดำเนิน</th>
-                        <th style="background-color: #16a085; min-width: 150px;">กำไรสุทธิ</th><th>%สุทธิ</th>
+                        <th>ดำเนินการ</th><th>%ด.</th>
+                        <th style="background-color: #16a085; min-width: 120px;">กำไรสุทธิ</th><th>%สุทธิ</th>
                     </tr>
                 </thead>
                 <tbody>
             """)
 
-            # 2. Rows
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
-                max_profit = calc['กำไรสุทธิ'].max() if calc['กำไรสุทธิ'].max() > 0 else 100
-                bar_width = min(max(0, (net_profit / max_profit) * 100), 100)
                 
-                # Format Date to Thai
+                # Logic ป้องกันหารด้วย 0 สำหรับ Bar Width
+                max_profit = calc['กำไรสุทธิ'].max()
+                if max_profit <= 0: max_profit = 1 
+                
+                bar_width = 0
+                if net_profit > 0:
+                    bar_width = min((net_profit / max_profit) * 100, 100)
+                
                 date_str = format_thai_date(r['created_date'])
 
+                # ⚠️ เขียน HTML แบบบรรทัดเดียว (Minified) เพื่อป้องกันการเพี้ยนของ Layout
                 row_html = f"""
                 <tr>
                     <td class="txt">{date_str}</td>
@@ -575,19 +573,17 @@ with tab_dash:
                     <td class="num">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
                     <td class="num">{r['ค่าดำเนินการ']:,.0f}</td>
                     <td class="num">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
-                    <td class="num font-bold text-teal">
+                    <td class="num font-bold text-teal" style="position: relative;">
                         {net_profit:,.2f}
-                        <div class="p-bg"><div class="p-fill" style="width: {bar_width}%;"></div></div>
+                        {'<div class="p-bg"><div class="p-fill" style="width: ' + str(bar_width) + '%;"></div></div>' if bar_width > 0 else ''}
                     </td>
                     <td class="num">{safe_div(net_profit, sales):.1f}%</td>
-                </tr>
-                """
-                html_parts.append(row_html)
-            
-            # 3. Close
+                </tr>"""
+                
+                # ลบ Newlines ออกเพื่อให้ String เป็นก้อนเดียวกันจริงๆ
+                html_parts.append(row_html.replace('\n', ''))
+
             html_parts.append("</tbody></table></div>")
-            
-            # 4. Render
             st.markdown("".join(html_parts), unsafe_allow_html=True)
 
         else: st.info("ไม่พบข้อมูล")
