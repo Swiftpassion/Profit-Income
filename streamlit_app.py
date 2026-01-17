@@ -14,7 +14,7 @@ import math
 # --- 1. CONFIGURATION & CSS ---
 st.set_page_config(page_title="Dashboard สรุปยอดขาย", layout="wide", page_icon="🛍️")
 
-# Custom CSS สำหรับ HTML Table และ Layout
+# Custom CSS
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
@@ -23,18 +23,19 @@ st.markdown("""
         font-family: 'Kanit', sans-serif;
     }
 
-    /* สไตล์ตาราง HTML */
+    /* CSS สำหรับตาราง HTML */
     .custom-table-container {
         overflow-x: auto;
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         margin-top: 20px;
+        border: 1px solid #e0e0e0;
     }
     
     table.report-table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1500px; /* บังคับความกว้างขั้นต่ำเพื่อให้เลื่อนได้ */
+        min-width: 1500px;
         background-color: white;
     }
     
@@ -56,27 +57,20 @@ st.markdown("""
         border: 1px solid #ecf0f1;
         color: #2c3e50;
         font-size: 14px;
+        vertical-align: middle;
     }
 
-    table.report-table tr:nth-child(even) {
-        background-color: #f8f9fa;
-    }
-    
-    table.report-table tr:hover {
-        background-color: #e8f6f3;
-        transition: 0.2s;
-    }
+    table.report-table tr:nth-child(even) { background-color: #f8f9fa; }
+    table.report-table tr:hover { background-color: #e8f6f3; transition: 0.2s; }
 
-    /* จัดแนวตัวเลข */
     .num-cell { text-align: right; }
     .text-cell { text-align: center; }
     
-    /* Progress Bar ใน HTML */
     .progress-bg {
         background-color: #e0e0e0;
         border-radius: 4px;
         width: 100%;
-        height: 8px;
+        height: 6px;
         margin-top: 5px;
     }
     .progress-fill {
@@ -161,7 +155,6 @@ def load_cost_data():
     except: return pd.DataFrame()
 
 # --- 3. PROCESSORS (Logic เดิม) ---
-# (ลดรูปเพื่อความกระชับ แต่ Logic คงเดิมตามที่คุณต้องการ)
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
@@ -306,11 +299,11 @@ def process_lazada(order_files, income_files, shop_name):
     return pd.merge(final, income_master, on='order_id', how='left') if not income_master.empty else final
 
 # ==========================================
-# SIDEBAR: SYNC SYSTEM (ดึงข้อมูล)
+# SIDEBAR: SYNC SYSTEM
 # ==========================================
 with st.sidebar:
     st.header("🔄 ระบบดึงข้อมูล")
-    st.caption("ดึงจาก Google Drive > Database")
+    st.caption("Google Drive > Database")
     
     with st.expander("🛠️ เครื่องมือ Sync", expanded=True):
         start_sync = st.button("🚀 Sync Data (ล้างเก่าลงใหม่)", type="primary", use_container_width=True)
@@ -402,16 +395,14 @@ with st.sidebar:
 # MAIN CONTENT
 # ==========================================
 
-# สร้าง Tabs
 tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
 # --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Filters
+    # Filters
     col_filters = st.columns([1, 1, 1, 1])
-    
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     today = datetime.datetime.now().date()
     
@@ -433,7 +424,6 @@ with tab_dash:
     with col_filters[2]: st.session_state.d_start = st.date_input("วันที่เริ่ม", st.session_state.d_start)
     with col_filters[3]: st.session_state.d_end = st.date_input("ถึงวันที่", st.session_state.d_end)
 
-    # 2. Platform Selector
     cp1, cp2, cp3, cp4, cp5 = st.columns([1, 1, 1, 1, 6])
     with cp1: all_plat = st.checkbox("✅ ทั้งหมด", value=True)
     with cp2: tiktok_check = st.checkbox("✅ Tiktok", value=all_plat, disabled=all_plat)
@@ -446,7 +436,7 @@ with tab_dash:
         if shopee_check: sel_plats.append('SHOPEE')
         if lazada_check: sel_plats.append('LAZADA')
 
-    # 3. Process Data
+    # Data Processing
     try:
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
@@ -460,7 +450,6 @@ with tab_dash:
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-            # Group
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
             
@@ -477,7 +466,7 @@ with tab_dash:
             
             final_df = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
 
-            # Ads Input (Small Editor)
+            # Ads Input
             if "ads_data" not in st.session_state: st.session_state.ads_data = {}
             
             editor_data = []
@@ -497,13 +486,11 @@ with tab_dash:
                 hide_index=True, num_rows="fixed", height=200, use_container_width=True
             )
 
-            # Update Session State
             for _, row in edited_ads.iterrows():
                 st.session_state.ads_data[str(row['วันที่'])] = {'ads': row['ค่า ADS'], 'roas': row['ROAS ADS']}
 
-            # Calculate Final
+            # Calculate
             calc = final_df.copy()
-            # Map ads back
             calc['manual_ads'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('ads', 0))
             calc['manual_roas'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('roas', 0))
 
@@ -517,8 +504,8 @@ with tab_dash:
             calc['ค่าดำเนินการ'] = (calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']) * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # Generate HTML Table
-            html = """
+            # HTML Table Building
+            table_header = """
             <div class="custom-table-container">
             <table class="report-table">
                 <thead>
@@ -542,15 +529,14 @@ with tab_dash:
                 <tbody>
             """
 
+            table_rows = []
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
-                
-                # Progress bar logic
                 max_profit = calc['กำไรสุทธิ'].max() if calc['กำไรสุทธิ'].max() > 0 else 100
                 bar_width = min(max(0, (net_profit / max_profit) * 100), 100)
                 
-                html += f"""
+                row_html = f"""
                 <tr>
                     <td class="text-cell">{r['created_date'].strftime('%d %b %Y')}</td>
                     <td class="num-cell">{int(r['success_count'])}</td>
@@ -581,9 +567,10 @@ with tab_dash:
                     <td class="num-cell">{safe_div(net_profit, sales):.1f}%</td>
                 </tr>
                 """
+                table_rows.append(row_html)
             
-            html += "</tbody></table></div>"
-            st.markdown(html, unsafe_allow_html=True)
+            final_html = table_header + "".join(table_rows) + "</tbody></table></div>"
+            st.markdown(final_html, unsafe_allow_html=True)
 
         else: st.info("ไม่พบข้อมูล")
     except Exception as e: st.error(f"Error: {e}")
@@ -596,18 +583,17 @@ with tab_cost:
         cur_data = pd.DataFrame(res.data)
         if cur_data.empty: cur_data = pd.DataFrame(columns=['sku', 'platform', 'unit_cost'])
         
-        # Show only SKU and Unit Cost for editing, Platform read-only/hidden logic
-        # User requested: Show only SKU and Unit Cost
-        # But we need Platform to save correctly. I will show Platform as disabled.
+        # Drop columns that cause issues or shouldn't be edited
+        # We only show SKU, Unit Cost, and Platform (read-only context)
+        # To fix 'hidden' error, we just select specific columns to show
+        display_df = cur_data[['sku', 'unit_cost', 'platform']].copy()
         
         edited = st.data_editor(
-            cur_data,
+            display_df,
             column_config={
                 "sku": st.column_config.TextColumn("รหัสสินค้า (SKU)", required=True),
                 "unit_cost": st.column_config.NumberColumn("ต้นทุน (บาท)", format="%.2f", min_value=0),
-                "platform": st.column_config.TextColumn("แพลตฟอร์ม", disabled=True), # Read-only
-                "id": st.column_config.Column(hidden=True),
-                "created_at": st.column_config.Column(hidden=True)
+                "platform": st.column_config.TextColumn("แพลตฟอร์ม", disabled=True),
             },
             hide_index=True,
             num_rows="dynamic",
@@ -616,14 +602,10 @@ with tab_cost:
         
         if st.button("💾 บันทึกต้นทุนสินค้า"):
             if not edited.empty:
-                # Clean
                 edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
-                # Save
-                data_to_save = edited.to_dict('records')
-                # Delete old (truncate logic or upsert) - simpler to delete all except id 0 then insert
-                # But here we should be careful. Let's delete all and insert.
+                # We need to wipe and insert because we don't track IDs in the editor
                 supabase.table("product_costs").delete().neq("id", 0).execute()
-                supabase.table("product_costs").insert(data_to_save).execute()
+                supabase.table("product_costs").insert(edited.to_dict('records')).execute()
                 st.success("บันทึกสำเร็จ!")
                 st.rerun()
     except Exception as e: st.error(f"Error Cost: {e}")
@@ -635,8 +617,6 @@ with tab_old:
         res = supabase.table("orders").select("*").execute()
         if res.data:
             old_df = pd.DataFrame(res.data)
-            # Display FULL SCREEN height
             st.dataframe(old_df, height=2500, use_container_width=True)
-        else:
-            st.info("ไม่มีข้อมูล")
+        else: st.info("ไม่มีข้อมูล")
     except: pass
