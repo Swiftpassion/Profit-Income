@@ -336,9 +336,19 @@ tab1, tab2 = st.tabs(["🚀 Sync & Dashboard", "💰 ตั้งค่าต้
 
 with tab1:
     if st.button("🚀 Sync Data from Google Drive"):
+        st.write("🔄 **Start Debugging Process...**") # Debug 1
+        
         with st.spinner("Connecting to Google Drive..."):
+            # 1. เช็คไฟล์ในโฟลเดอร์หลัก
             root_files = list_files_in_folder(PARENT_FOLDER_ID)
+            st.write(f"📂 พบไฟล์/โฟลเดอร์ใน Drive ทั้งหมด: {len(root_files)} รายการ") # Debug 2
+            
+            if len(root_files) == 0:
+                st.error("❌ ไม่พบไฟล์ในโฟลเดอร์หลักเลย เช็ค PARENT_FOLDER_ID หรือสิทธิ์การเข้าถึง")
+                st.stop()
+
             folder_map = {f['name']: f['id'] for f in root_files if f['mimeType'] == 'application/vnd.google-apps.folder'}
+            st.write(f"📂 พบโฟลเดอร์ย่อย: {list(folder_map.keys())}") # Debug 3
             
             shops = {
                 'TIKTOK': ['TIKTOK 1', 'TIKTOK 2', 'TIKTOK 3'],
@@ -348,68 +358,91 @@ with tab1:
             income_folders = {'TIKTOK': 'INCOME TIKTOK', 'SHOPEE': 'INCOME SHOPEE', 'LAZADA': 'INCOME LAZADA'}
             
             all_data = []
+            
+            # 2. เริ่มวนลูปอ่านข้อมูล
             for platform, shop_list in shops.items():
-                st.write(f"Processing {platform}...")
-                inc_files = list_files_in_folder(folder_map.get(income_folders[platform], ''))
+                # st.write(f"กำลังตรวจสอบ Platform: {platform}...") 
+                inc_folder_name = income_folders.get(platform)
+                inc_files = list_files_in_folder(folder_map.get(inc_folder_name, ''))
                 
                 for shop_name in shop_list:
                     if shop_name in folder_map:
                         order_files = list_files_in_folder(folder_map[shop_name])
+                        
+                        # st.write(f"  - ร้าน {shop_name}: พบไฟล์ออเดอร์ {len(order_files)} ไฟล์")
+                        
                         df_res = pd.DataFrame()
-                        
-                        if platform == 'TIKTOK': df_res = process_tiktok(order_files, inc_files, shop_name)
-                        elif platform == 'SHOPEE': df_res = process_shopee(order_files, inc_files, shop_name)
-                        elif platform == 'LAZADA': df_res = process_lazada(order_files, inc_files, shop_name)
-                        
+                        try:
+                            if platform == 'TIKTOK': df_res = process_tiktok(order_files, inc_files, shop_name)
+                            elif platform == 'SHOPEE': df_res = process_shopee(order_files, inc_files, shop_name)
+                            elif platform == 'LAZADA': df_res = process_lazada(order_files, inc_files, shop_name)
+                        except Exception as e:
+                            st.error(f"  ❌ Error processing {shop_name}: {e}")
+
                         if not df_res.empty:
                             all_data.append(df_res)
-                            st.success(f"Loaded {len(df_res)} orders from {shop_name}")
+                            st.success(f"  ✅ {shop_name}: ดึงข้อมูลได้ {len(df_res)} รายการ")
+                        else:
+                            # ถ้าไฟล์มีแต่ดึงไม่ได้ อาจจะเตือนนิดหน่อย
+                            if len(order_files) > 0:
+                                st.warning(f"  ⚠️ {shop_name}: มีไฟล์แต่ดึงข้อมูลไม่ได้ (เช็ค format ไฟล์)")
 
+            # 3. รวมข้อมูล
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
+                st.info(f"📊 รวมข้อมูลดิบทั้งหมดได้: {len(master_df)} แถว -> กำลังคำนวณกำไร...") # Debug 4
                 
-                # --- [เพิ่มใหม่] ส่วนคำนวณต้นทุนและกำไร ---
-                st.info("กำลังดึงข้อมูลต้นทุนและคำนวณกำไร...")
+                # --- ส่วนคำนวณ ---
                 cost_df = load_cost_data()
-                
                 if not cost_df.empty:
-                    # Merge โดยใช้ sku และ platform เป็นตัวเชื่อม
                     master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
-                    master_df['unit_cost'] = master_df['unit_cost'].fillna(0)
-                    master_df['quantity'] = pd.to_numeric(master_df['quantity'], errors='coerce').fillna(0)
-                    master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
-                    master_df['settlement_amount'] = pd.to_numeric(master_df['settlement_amount'], errors='coerce').fillna(0)
-                    master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
                 else:
-                    st.warning("ไม่พบข้อมูลต้นทุน (Master Cost) กำไรจะเป็น 0")
+                    st.warning("⚠️ ไม่พบข้อมูลต้นทุน (Master Cost) กำไรจะเป็น 0")
                     master_df['unit_cost'] = 0
-                    master_df['total_cost'] = 0
-                    master_df['net_profit'] = 0
-                # ----------------------------------------
 
-                master_df = master_df.where(pd.notnull(master_df), None)
+                # Fill NaNs & Calculate
+                for col in ['quantity', 'unit_cost', 'settlement_amount']:
+                    if col in master_df.columns:
+                        master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
                 
+                master_df['total_cost'] = master_df.get('quantity', 0) * master_df.get('unit_cost', 0)
+                master_df['net_profit'] = master_df.get('settlement_amount', 0) - master_df.get('total_cost', 0)
+
+                # เตรียม Upload
+                master_df = master_df.where(pd.notnull(master_df), None)
                 for col in ['created_date', 'shipped_date', 'settlement_date']:
                     if col in master_df.columns:
-                        master_df[col] = master_df[col].apply(lambda x: str(x) if x is not None else None)
-                
-                st.info("Uploading to Database...")
+                        master_df[col] = master_df[col].astype(str)
+
+                # 4. Upload ขึ้น Supabase
+                st.info("☁️ กำลังอัปโหลดขึ้น Database...")
                 records = master_df.to_dict(orient='records')
                 
-                chunk_size = 1000
+                chunk_size = 500
+                total_uploaded = 0
+                error_count = 0
+                
+                progress_bar = st.progress(0)
+                
                 for i in range(0, len(records), chunk_size):
                     chunk = records[i:i + chunk_size]
                     try:
-                        # หมายเหตุ: ถ้าใน Database ตาราง orders ยังไม่มี column 'total_cost' หรือ 'net_profit' 
-                        # อาจจะต้องไปเพิ่ม Column ใน Supabase ก่อน ไม่งั้นบรรทัดนี้อาจ Error หรือไม่บันทึกค่าใหม่
                         supabase.table("orders").upsert(chunk).execute()
+                        total_uploaded += len(chunk)
                     except Exception as e:
-                        st.error(f"Upload Error: {e}")
+                        error_count += 1
+                        st.error(f"❌ Upload Error (Chunk {i}): {e}")
+                    
+                    progress_bar.progress(min((i + chunk_size) / len(records), 1.0))
                 
-                st.success("✅ Data Sync Complete!")
-                st.rerun()
+                if error_count == 0:
+                    st.success(f"✅ Sync เสร็จสมบูรณ์! อัปโหลดแล้ว {total_uploaded} รายการ")
+                    st.rerun()
+                else:
+                    st.error("⚠️ Sync เสร็จสิ้นแต่มีบางรายการล้มเหลว ลองเช็ค Error ด้านบน")
             else:
-                st.warning("No data found.")
+                st.error("❌ ไม่พบข้อมูลออเดอร์ที่ใช้ได้เลย (all_data ว่างเปล่า)")
+                st.info("คำแนะนำ: ลองเปิดไฟล์ Excel ใน Drive ดูว่ามีข้อมูลไหม หรือชื่อ Sheet ตรงกับโค้ดไหม")
 
     # [แก้ไข] ย่อหน้าเข้ามา 1 Step (4 เคาะ) เพื่อให้อยู่ใน with tab1:
     st.divider()
