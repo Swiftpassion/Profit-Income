@@ -40,12 +40,8 @@ def download_file(file_id):
     return fh
 
 def clean_date(df, col_name):
-    """
-    แปลงค่าวันที่และทำให้เป็น format Date มาตรฐาน (YYYY-MM-DD)
-    ตัดเวลา (Time) ออก เหลือแต่วันที่
-    """
+    """แปลงค่าวันที่และทำให้เป็น format Date มาตรฐาน (YYYY-MM-DD) ตัดเวลาออก"""
     if col_name in df.columns:
-        # ใช้ dayfirst=True เผื่อเจอ format 27/12/2025
         df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True).dt.date
     return df
 
@@ -64,6 +60,37 @@ def clean_scientific_notation(val):
         except:
             return val_str
     return val_str
+
+def get_standard_status(row):
+    """
+    แปลงสถานะให้เป็นมาตรฐานเดียวกันทุกแพลตฟอร์ม
+    1. ถ้ามียอดเงินเข้า (>0) -> ออเดอร์สำเร็จ
+    2. เช็คคำว่า ยกเลิก/cancel -> ยกเลิก
+    3. เช็คคำว่า return/ตีกลับ -> ตีกลับ
+    4. นอกเหนือจากนั้น -> รอดำเนินการ
+    """
+    # 1. เช็คยอดเงินเข้า
+    try:
+        amt = float(row.get('settlement_amount', 0))
+    except:
+        amt = 0
+        
+    if amt > 0:
+        return "ออเดอร์สำเร็จ"
+
+    # ดึงสถานะเดิมมาเช็ค Keyword
+    raw_status = str(row.get('status', '')).lower()
+
+    # 2. เช็คยกเลิก
+    if any(x in raw_status for x in ['ยกเลิก', 'cancel']):
+        return "ยกเลิก"
+
+    # 3. เช็คตีกลับ
+    if any(x in raw_status for x in ['package returned', 'return', 'ตีกลับ']):
+        return "ตีกลับ"
+
+    # 4. Default
+    return "รอดำเนินการ"
 
 # [Function] Load Cost Data
 def load_cost_data():
@@ -153,7 +180,6 @@ def process_tiktok(order_files, income_files, shop_name):
     income_master = pd.DataFrame()
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
-        # Deduplicate Income
         income_master = income_master.groupby('order_id').first().reset_index()
 
     # 2. Process Orders
@@ -162,12 +188,9 @@ def process_tiktok(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
-            # --- [CRITICAL FILTER]: TikTok ---
-            # ต้องมี 'Shipped Time' เท่านั้น
+            # --- [CRITICAL FILTER]: Shipped Time Only ---
             if 'Shipped Time' in df.columns:
-                # 1. กรองแถวที่ไม่มี Shipped Time ออก (Drop NaNs)
                 df = df.dropna(subset=['Shipped Time'])
-                # 2. กรองแถวที่เป็นค่าว่างเปล่า (Empty Strings)
                 df = df[df['Shipped Time'].astype(str).str.strip() != '']
                 
                 cols_needed = {
@@ -177,7 +200,7 @@ def process_tiktok(order_files, income_files, shop_name):
                     'Quantity': 'quantity',
                     'SKU Subtotal After Discount': 'sales_amount',
                     'Created Time': 'created_date',
-                    'Shipped Time': 'shipped_date', # Column AC
+                    'Shipped Time': 'shipped_date',
                     'Tracking ID': 'tracking_id'
                 }
                 
@@ -187,9 +210,8 @@ def process_tiktok(order_files, income_files, shop_name):
                 df['shop_name'] = shop_name
                 df['platform'] = 'TIKTOK'
                 
-                # --- [Clean Date] ตัดเวลาออก ---
                 df = clean_date(df, 'created_date')
-                df = clean_date(df, 'shipped_date') # จะเหลือแค่ YYYY-MM-DD
+                df = clean_date(df, 'shipped_date')
                 
                 df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                 df = clean_text(df, 'sku') 
@@ -199,12 +221,17 @@ def process_tiktok(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
 
-    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
     
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
+
+    # [NEW] Apply Standard Status
+    if 'settlement_amount' not in final_df.columns:
+        final_df['settlement_amount'] = 0
+    final_df['status'] = final_df.apply(get_standard_status, axis=1)
+
     return final_df
 
 # --- PROCESSOR: SHOPEE ---
@@ -264,18 +291,15 @@ def process_shopee(order_files, income_files, shop_name):
                 else:
                     df = pd.read_excel(f_data, dtype=str)
                 
-                # --- [CRITICAL FILTER]: Shopee ---
-                # ต้องมี 'เวลาการชำระสินค้า' (Column H)
+                # --- [CRITICAL FILTER]: Paid Time Only ---
                 if 'เวลาการชำระสินค้า' in df.columns:
-                    # 1. กรองแถวที่ไม่มีเวลาชำระเงินออก
                     df = df.dropna(subset=['เวลาการชำระสินค้า'])
-                    # 2. กรองค่าว่าง
                     df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
                     
                     cols_needed = {
                         'หมายเลขคำสั่งซื้อ': 'order_id',
                         'สถานะการสั่งซื้อ': 'status',
-                        'เวลาการชำระสินค้า': 'shipped_date', # Column H
+                        'เวลาการชำระสินค้า': 'shipped_date',
                         'เลขอ้างอิง SKU (SKU Reference No.)': 'sku',
                         'จำนวน': 'quantity',
                         'ราคาขายสุทธิ': 'sales_amount',
@@ -289,9 +313,8 @@ def process_shopee(order_files, income_files, shop_name):
                     df['shop_name'] = shop_name
                     df['platform'] = 'SHOPEE'
                     
-                    # --- [Clean Date] ตัดเวลาออก ---
                     df = clean_date(df, 'created_date')
-                    df = clean_date(df, 'shipped_date') # จะเหลือแค่ YYYY-MM-DD
+                    df = clean_date(df, 'shipped_date')
                     
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     df = clean_text(df, 'sku') 
@@ -308,6 +331,12 @@ def process_shopee(order_files, income_files, shop_name):
 
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
+
+    # [NEW] Apply Standard Status
+    if 'settlement_amount' not in final_df.columns:
+        final_df['settlement_amount'] = 0
+    final_df['status'] = final_df.apply(get_standard_status, axis=1)
+
     return final_df
 
 # --- PROCESSOR: LAZADA ---
@@ -348,12 +377,9 @@ def process_lazada(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
-            # --- [CRITICAL FILTER]: Lazada ---
-            # ต้องมี 'trackingCode' เท่านั้น (Column BG)
+            # --- [CRITICAL FILTER]: trackingCode Only ---
             if 'trackingCode' in df.columns:
-                # 1. กรองแถวที่ไม่มี Tracking Code ออก
                 df = df.dropna(subset=['trackingCode'])
-                # 2. กรองค่าว่าง
                 df = df[df['trackingCode'].astype(str).str.strip() != '']
                 
                 cols_needed = {
@@ -372,7 +398,6 @@ def process_lazada(order_files, income_files, shop_name):
                 df['shop_name'] = shop_name
                 df['platform'] = 'LAZADA'
                 
-                # --- [Clean Date] ตัดเวลาออก ---
                 df = clean_date(df, 'created_date')
                 df = clean_date(df, 'shipped_date')
                 
@@ -390,6 +415,12 @@ def process_lazada(order_files, income_files, shop_name):
     if not income_master.empty:
         income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
+    
+    # [NEW] Apply Standard Status
+    if 'settlement_amount' not in final_df.columns:
+        final_df['settlement_amount'] = 0
+    final_df['status'] = final_df.apply(get_standard_status, axis=1)
+
     return final_df
 
 # --- MAIN APP ---
@@ -453,13 +484,8 @@ with tab1:
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
                 
-                # Deduplication (Safety Net)
-                before_dedup = len(master_df)
+                # Deduplication
                 master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
-                after_dedup = len(master_df)
-                
-                if before_dedup > after_dedup:
-                    st.warning(f"🧹 Removed {before_dedup - after_dedup} duplicated rows.")
 
                 st.info(f"📊 ข้อมูลสุทธิ: {len(master_df)} แถว -> กำลังประมวลผล...")
 
