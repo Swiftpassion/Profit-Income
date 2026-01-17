@@ -40,16 +40,18 @@ def download_file(file_id):
     return fh
 
 def clean_date(df, col_name):
+    """แปลงค่าวันที่และทำให้เป็น format Date มาตรฐาน"""
     df[col_name] = pd.to_datetime(df[col_name], errors='coerce').dt.date
     return df
 
 def clean_text(df, col_name):
-    """Cleans text columns by converting to string, stripping whitespace, and uppercasing."""
+    """ทำความสะอาด text: ลบช่องว่างหน้าหลัง, ทำตัวพิมพ์ใหญ่"""
     if col_name in df.columns:
         df[col_name] = df[col_name].astype(str).str.strip().str.upper()
     return df
 
 def clean_scientific_notation(val):
+    """แก้ปัญหาเลข Order ID ติด E (Scientific Notation)"""
     val_str = str(val).strip()
     if 'E' in val_str or 'e' in val_str:
         try:
@@ -146,6 +148,7 @@ def process_tiktok(order_files, income_files, shop_name):
     income_master = pd.DataFrame()
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
+        # Deduplicate Income
         income_master = income_master.groupby('order_id').first().reset_index()
 
     # 2. Process Orders
@@ -154,6 +157,7 @@ def process_tiktok(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
+            # --- [FILTER]: Shipped Time ต้องมีค่า ---
             if 'Shipped Time' in df.columns:
                 df = df.dropna(subset=['Shipped Time'])
                 
@@ -183,6 +187,7 @@ def process_tiktok(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
 
+    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
     
@@ -194,25 +199,19 @@ def process_tiktok(order_files, income_files, shop_name):
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     
-    # ==========================================
-    # 1. Process Income Files (CSV & Excel)
-    # ==========================================
+    # 1. Process Income (CSV & Excel)
     income_dfs = []
     for file_info in income_files:
-        # Check for Excel (.xls, .xlsx) and CSV
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
                 
-                # A. Loader Logic: CSV vs Excel
+                # Check extension
                 if 'csv' in file_info['name'].lower():
-                    # CSVs are usually raw text without header offset
                     df = pd.read_csv(f_data, dtype=str)
                 else:
-                    # Excel reports usually have 5 header rows of metadata
                     df = pd.read_excel(f_data, sheet_name='Income', header=5, dtype=str)
                 
-                # B. Rename Columns
                 rename_map = {
                     'หมายเลขคำสั่งซื้อ': 'order_id',
                     'วันที่โอนชำระเงินสำเร็จ': 'settlement_date',
@@ -224,7 +223,6 @@ def process_shopee(order_files, income_files, shop_name):
                 existing_cols = [c for c in rename_map.keys() if c in df.columns]
                 df = df[existing_cols].rename(columns=rename_map)
                 
-                # C. Calculate Fees
                 for col in ['original_price', 'settlement_amount', 'affiliate']:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -243,30 +241,25 @@ def process_shopee(order_files, income_files, shop_name):
         income_master = pd.concat(income_dfs, ignore_index=True)
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
         
-        # [CRITICAL FIX] Filter columns strictly to avoid 'original_price' DB error
+        # [Strict Column Filter]
         cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
         cols_to_keep = [c for c in cols_to_keep if c in income_master.columns]
         income_master = income_master[cols_to_keep] 
         
-        # Deduplicate Income (One row per Order ID)
         income_master = income_master.drop_duplicates(subset=['order_id'])
 
-    # ==========================================
-    # 2. Process Order Files
-    # ==========================================
+    # 2. Process Orders (CSV & Excel)
     for file_info in order_files:
-        # Support both .xls and .xlsx for Orders
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
                 
-                # Load Data
                 if 'csv' in file_info['name'].lower():
                     df = pd.read_csv(f_data, dtype=str)
                 else:
                     df = pd.read_excel(f_data, dtype=str)
                 
-                # Filter valid rows
+                # --- [FILTER]: เวลาการชำระสินค้า ต้องมีค่า ---
                 if 'เวลาการชำระสินค้า' in df.columns:
                     df = df.dropna(subset=['เวลาการชำระสินค้า'])
                     
@@ -286,8 +279,6 @@ def process_shopee(order_files, income_files, shop_name):
 
                     df['shop_name'] = shop_name
                     df['platform'] = 'SHOPEE'
-                    
-                    # Clean Data
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
@@ -300,16 +291,12 @@ def process_shopee(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
     
-    # [CRITICAL FIX] Strict Deduplication for Orders (Order ID + SKU)
+    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
-    # ==========================================
-    # 3. Merge Income & Return
-    # ==========================================
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
-        
     return final_df
 
 # --- PROCESSOR: LAZADA ---
@@ -355,6 +342,7 @@ def process_lazada(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
+            # --- [FILTER]: trackingCode ต้องมีค่า ---
             if 'trackingCode' in df.columns:
                 df = df.dropna(subset=['trackingCode'])
                 
@@ -383,6 +371,7 @@ def process_lazada(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
     
+    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
@@ -452,7 +441,7 @@ with tab1:
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
                 
-                # Deduplication
+                # Deduplication (Safety Net)
                 before_dedup = len(master_df)
                 master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
                 after_dedup = len(master_df)
@@ -502,9 +491,8 @@ with tab1:
                     if col in master_df.columns:
                         master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
 
-                # --- [IMPORTANT FIX] FILTER ONLY DB COLUMNS ---
-                # This explicitly selects only columns that exist in the DB Schema
-                # to prevent errors like "Could not find 'original_price' column"
+                # --- [IMPORTANT] Strict DB Column Filter ---
+                # ป้องกัน error: "Could not find column in schema"
                 valid_db_columns = [
                     'order_id', 'status', 'sku', 'quantity', 'sales_amount', 
                     'settlement_amount', 'fees', 'affiliate', 'net_profit', 
@@ -512,8 +500,6 @@ with tab1:
                     'created_date', 'shipped_date', 'tracking_id', 
                     'shop_name', 'platform'
                 ]
-                
-                # Keep only allowed columns
                 final_upload_cols = [c for c in valid_db_columns if c in master_df.columns]
                 master_df = master_df[final_upload_cols]
 
@@ -536,7 +522,7 @@ with tab1:
                 for i in range(0, len(records), chunk_size):
                     chunk = records[i:i + chunk_size]
                     
-                    # Sanitize chunk (NaN/Infinity fix)
+                    # [Sanitizer] NaN/Inf Fix
                     clean_chunk = []
                     for row in chunk:
                         clean_row = {}
