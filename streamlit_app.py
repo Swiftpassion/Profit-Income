@@ -339,7 +339,6 @@ with tab1:
         st.write("🔄 **Start Debugging Process...**")
         
         with st.spinner("Connecting to Google Drive..."):
-            # 1. เช็คไฟล์ในโฟลเดอร์หลัก
             root_files = list_files_in_folder(PARENT_FOLDER_ID)
             
             if len(root_files) == 0:
@@ -357,7 +356,7 @@ with tab1:
             
             all_data = []
             
-            # 2. เริ่มวนลูปอ่านข้อมูล
+            # --- LOOP อ่านข้อมูล ---
             for platform, shop_list in shops.items():
                 inc_folder_name = income_folders.get(platform)
                 inc_files = list_files_in_folder(folder_map.get(inc_folder_name, ''))
@@ -378,39 +377,78 @@ with tab1:
                             all_data.append(df_res)
                             st.success(f"  ✅ {shop_name}: ดึงข้อมูลได้ {len(df_res)} รายการ")
 
-            # 3. รวมข้อมูลและคำนวณ
+            # --- ส่วนจัดการข้อมูล (Logic ใหม่) ---
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
-                st.info(f"📊 รวมข้อมูลดิบได้: {len(master_df)} แถว -> กำลังคำนวณกำไร...")
-                
-                # --- [ส่วนสำคัญ] จัดการ NaN ให้อยู่หมัด ---
-                import numpy as np
-                
-                # 3.1 ดึงต้นทุนมาแปะ
-                cost_df = load_cost_data()
-                if not cost_df.empty:
-                    master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
-                else:
-                    master_df['unit_cost'] = 0
+                st.info(f"📊 ข้อมูลดิบทั้งหมด: {len(master_df)} แถว -> กำลังประมวลผล...")
 
-                # 3.2 บังคับเปลี่ยนค่าว่างในช่องตัวเลขให้เป็น 0.0 ทั้งหมด (Big Cleaning)
-                numeric_cols = [
-                    'quantity', 'unit_cost', 'total_cost', 'net_profit', 
-                    'sales_amount', 'settlement_amount', 'fees', 'affiliate'
-                ]
-                
-                for col in numeric_cols:
+                # 1. แปลงตัวเลขให้ชัวร์ก่อนคำนวณ
+                import numpy as np
+                cols_num = ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'unit_cost']
+                for col in cols_num:
                     if col in master_df.columns:
                         master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
                     else:
-                        master_df[col] = 0.0 # ถ้าไม่มีคอลัมน์ก็สร้างขึ้นมาเป็น 0 เลย
+                        master_df[col] = 0.0
 
-                # 3.3 คำนวณกำไร (ตอนนี้มั่นใจได้ว่าไม่มี NaN มาทำให้ Error)
+                # -------------------------------------------------------------
+                # [จุดแก้ที่ 1] รวมสินค้า SKU เดียวกันในออเดอร์เดียวกัน (แก้ Error ซ้ำ)
+                # เช่น: สั่ง S01 มา 3 บรรทัด -> รวมเป็นบรรทัดเดียว แต่ Quantity = 3
+                # -------------------------------------------------------------
+                group_cols = ['order_id', 'sku', 'platform']
+                
+                # คอลัมน์ที่ต้องการเอาผลรวม (Sum)
+                agg_dict = {
+                    'quantity': 'sum',
+                    'sales_amount': 'sum'
+                }
+                
+                # คอลัมน์อื่นๆ ให้เอาค่าแรกที่เจอ (First) เพราะเหมือนกันทุกบรรทัด
+                other_cols = [c for c in master_df.columns if c not in group_cols + ['quantity', 'sales_amount']]
+                for c in other_cols:
+                    agg_dict[c] = 'first'
+                
+                # ทำการ Group รวมแถว
+                master_df = master_df.groupby(group_cols, as_index=False).agg(agg_dict)
+                st.write(f"   ...รวมสินค้าซ้ำแล้วเหลือ: {len(master_df)} แถว")
+
+                # -------------------------------------------------------------
+                # [จุดแก้ที่ 2] เฉลี่ยยอดเงินเข้า (Pro-rate) กรณี 1 ออเดอร์มีหลาย SKU
+                # เพื่อให้กำไรของแต่ละ SKU ถูกต้อง ไม่เบิ้ลยอดเงิน
+                # -------------------------------------------------------------
+                
+                # หายอดขายรวมของทั้งออเดอร์
+                order_totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
+                
+                # คำนวณสัดส่วน (Ratio) เช่น สินค้า A ขาย 100 จากยอดรวม 200 -> Ratio = 0.5
+                # (ป้องกันการหารด้วย 0)
+                ratio = master_df['sales_amount'] / order_totals.replace(0, 1)
+                
+                # คูณสัดส่วนเข้าไปที่ยอดเงินเข้าและค่าธรรมเนียม
+                master_df['settlement_amount'] = master_df['settlement_amount'] * ratio
+                master_df['fees'] = master_df['fees'] * ratio
+                master_df['affiliate'] = master_df['affiliate'] * ratio
+                
+                # ปัดทศนิยม 2 ตำแหน่งเพื่อให้ตัวเลขสวย
+                master_df['settlement_amount'] = master_df['settlement_amount'].round(2)
+                master_df['fees'] = master_df['fees'].round(2)
+
+                # --- ส่วนคำนวณต้นทุน & กำไร ---
+                cost_df = load_cost_data()
+                if not cost_df.empty:
+                    master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
+                    # ถ้า merge แล้ว unit_cost_y (จากไฟล์ต้นทุน) มาทับ ให้ใช้ตัวนั้น
+                    if 'unit_cost_y' in master_df.columns:
+                        master_df['unit_cost'] = master_df['unit_cost_y'].fillna(0)
+                        master_df = master_df.drop(columns=['unit_cost_x', 'unit_cost_y'], errors='ignore')
+                else:
+                    master_df['unit_cost'] = 0
+
+                # คำนวณกำไรสุทธิ
                 master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
                 master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
 
-                # 3.4 จัดการคอลัมน์ที่ไม่ใช่ตัวเลข (วันที่, ข้อความ) ให้เป็น None แทน NaN
-                # (เพราะ JSON รับ None ได้ แต่รับ NaN ไม่ได้)
+                # Format ข้อมูลก่อนส่ง (จัดการวันที่ และค่า NaN)
                 master_df = master_df.replace([np.inf, -np.inf], 0)
                 master_df = master_df.where(pd.notnull(master_df), None)
                 
@@ -418,14 +456,13 @@ with tab1:
                     if col in master_df.columns:
                         master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
 
-                # 4. Upload ขึ้น Supabase
+                # --- UPLOAD ---
                 st.info("☁️ กำลังอัปโหลดขึ้น Database...")
                 records = master_df.to_dict(orient='records')
                 
                 chunk_size = 500
                 total_uploaded = 0
                 error_count = 0
-                
                 progress_bar = st.progress(0)
                 
                 for i in range(0, len(records), chunk_size):
@@ -440,12 +477,12 @@ with tab1:
                     progress_bar.progress(min((i + chunk_size) / len(records), 1.0))
                 
                 if error_count == 0:
-                    st.success(f"✅ Sync เสร็จสมบูรณ์! อัปโหลดแล้ว {total_uploaded} รายการ")
+                    st.success(f"✅ Sync เสร็จสมบูรณ์! ({total_uploaded} รายการ)")
                     st.rerun()
                 else:
-                    st.error("⚠️ Sync เสร็จสิ้นแต่มีบางรายการล้มเหลว ลองเช็ค Error ด้านบน")
+                    st.error("⚠️ มีบางรายการล้มเหลว (ลองกด Sync อีกครั้ง หรือเช็ค Error ด้านบน)")
             else:
-                st.error("❌ ไม่พบข้อมูลออเดอร์ที่ใช้ได้เลย (all_data ว่างเปล่า)")
+                st.error("❌ ไม่พบข้อมูลออเดอร์ที่ใช้ได้เลย")
 
     # [แก้ไข] ย่อหน้าเข้ามา 1 Step (4 เคาะ) เพื่อให้อยู่ใน with tab1:
     st.divider()
