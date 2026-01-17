@@ -224,7 +224,7 @@ def process_shopee(order_files, income_files, shop_name):
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
         # [FIX 1] Drop duplicate income rows from overlapping files
-        income_master = income_master.drop_duplicates() 
+        #income_master = income_master.drop_duplicates() 
         
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
         cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
