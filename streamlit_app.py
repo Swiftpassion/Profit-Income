@@ -169,7 +169,11 @@ def process_tiktok(order_files, income_files, shop_name):
                 all_orders.append(df)
 
     if not all_orders: return pd.DataFrame()
+
     final_df = pd.concat(all_orders, ignore_index=True)
+
+    # [FIX] Add this line
+    final_df = final_df.drop_duplicates()
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
     return final_df
@@ -213,6 +217,9 @@ def process_shopee(order_files, income_files, shop_name):
     income_master = pd.DataFrame()
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
+        # [FIX 1] Drop duplicate income rows from overlapping files
+        income_master = income_master.drop_duplicates() 
+        
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
         cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
         cols_to_keep = [c for c in cols_to_keep if c in income_master.columns]
@@ -251,7 +258,12 @@ def process_shopee(order_files, income_files, shop_name):
 
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
+    
+    # [FIX 2] CRITICAL: Drop exact duplicates caused by file overlaps
+    final_df = final_df.drop_duplicates()
+
     if not income_master.empty:
+        # Group income by order_id to prevent exploding rows during merge
         income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
     return final_df
@@ -325,6 +337,10 @@ def process_lazada(order_files, income_files, shop_name):
     
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
+
+    # [FIX] Add this line
+    final_df = final_df.drop_duplicates()
+    
     if not income_master.empty:
         income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
