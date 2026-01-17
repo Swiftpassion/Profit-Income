@@ -400,10 +400,11 @@ with st.sidebar:
 tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
 # --- TAB 1: DASHBOARD (HTML Table) ---
+# --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Filters (ส่วนกรองวันที่คงเดิม)
+    # 1. Filters (คงเดิม)
     col_filters = st.columns([1, 1, 1, 1])
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     today = datetime.datetime.now().date()
@@ -491,12 +492,12 @@ with tab_dash:
             for _, row in edited_ads.iterrows():
                 st.session_state.ads_data[str(row['วันที่'])] = {'ads': row['ค่า ADS'], 'roas': row['ROAS ADS']}
 
-            # Calculate Logic
+            # Calculate
             calc = final_df.copy()
             calc['manual_ads'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('ads', 0))
             calc['manual_roas'] = calc['created_date'].astype(str).map(lambda x: st.session_state.ads_data.get(x, {}).get('roas', 0))
 
-            # คำนวณจำนวนออเดอร์รวม
+            # New Calculation: Total Orders
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
@@ -509,9 +510,9 @@ with tab_dash:
             calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # --- HTML GENERATION ---
+            # --- HTML GENERATION (Updated) ---
             
-            # CSS: บังคับหัวตารางตัวหนังสือสีดำเพื่อให้ตัดกับสีพื้นหลัง
+            # CSS ปรับ Header Text Color เป็นสีดำ
             st.markdown("""
             <style>
                 table.report-table th { color: #000 !important; font-weight: 600; border-color: #bbb !important; }
@@ -530,25 +531,25 @@ with tab_dash:
                         <th style="background-color: #CAC8C8;">รอดำเนินการ</th>
                         <th style="background-color: #CAC8C8;">ตีกลับ</th>
                         <th style="background-color: #CAC8C8;">ยกเลิก</th>
-                        <th style="background-color: #8FD2FB;">ยอดขายรวม</th>
-                        <th style="background-color: #8FD2FB;">ROAS</th>
-                        <th style="background-color: #8FD2FB;">ROAS ADS</th>
+                        <th style="background-color: #DDEBF7;">ยอดขายรวม</th>
+                        <th style="background-color: #DDEBF7;">ROAS</th>
+                        <th style="background-color: #DDEBF7;">ROAS ADS</th>
                         <th style="background-color: #E2EFDA;">ทุนรวม</th>
                         <th style="background-color: #E2EFDA;">%ทุนรวม</th>
                         <th style="background-color: #FFF2CC;">ค่าธรรมเนียม</th>
                         <th style="background-color: #FFF2CC;">%ค่าธรรมเนียม</th>
                         <th style="background-color: #F8CBAD;">ค่าแอฟฟิลิเอต</th>
                         <th style="background-color: #F8CBAD;">%ค่าแอฟฟิลิเอต</th>
-                        <th style="background-color: #81FB98;">กำไร</th>
-                        <th style="background-color: #81FB98;">%กำไร</th>
-                        <th style="background-color: #FD8F5D;">ค่าADS</th>
-                        <th style="background-color: #FF5B5B;">ADS VAT 7%</th>
-                        <th style="background-color: #FD8F5D;">ค่าแอดรวม</th>
+                        <th style="background-color: #FCE4D6;">กำไร</th>
+                        <th style="background-color: #FCE4D6;">%กำไร</th>
+                        <th style="background-color: #B4C6E7;">ค่าADS</th>
+                        <th style="background-color: #B4C6E7;">ADS VAT 7%</th>
+                        <th style="background-color: #C6E0B4;">ค่าแอดรวม</th>
                         <th style="background-color: #C6E0B4;">%ค่าแอด</th>
                         <th style="background-color: #D0CECE;">ค่าดำเนินการ</th>
                         <th style="background-color: #D0CECE;">%ค่าดำเนินการ</th>
-                        <th style="background-color: #FF5B5B; min-width: 120px;">กำไรสุทธิ</th>
-                        <th style="background-color: #FF5B5B;">%กำไรสุทธิ</th>
+                        <th style="background-color: #F4B084; min-width: 120px;">กำไรสุทธิ</th>
+                        <th style="background-color: #F4B084;">%กำไรสุทธิ</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -558,7 +559,7 @@ with tab_dash:
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
                 
-                # Logic สร้าง Bar Chart
+                # Logic Bar Width
                 max_profit = calc['กำไรสุทธิ'].max()
                 if max_profit <= 0: max_profit = 1 
                 bar_width = 0
@@ -566,7 +567,6 @@ with tab_dash:
                 
                 date_str = format_thai_date(r['created_date'])
 
-                # Row HTML (แบบ Compact บรรทัดเดียว)
                 row_html = f"""
                 <tr>
                     <td class="txt">{date_str}</td>
@@ -598,9 +598,7 @@ with tab_dash:
                     </td>
                     <td class="num">{safe_div(net_profit, sales):.1f}%</td>
                 </tr>"""
-                
-                # ลบ Newlines
-                html_parts.append(row_html.replace('\n', ''))
+                html_parts.append(row_html.replace('\n', '')) # ลบ Newline เพื่อแก้ปัญหาย่อหน้า
 
             html_parts.append("</tbody></table></div>")
             st.markdown("".join(html_parts), unsafe_allow_html=True)
