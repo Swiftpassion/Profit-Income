@@ -401,6 +401,7 @@ tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Das
 
 # --- TAB 1: DASHBOARD (HTML Table) ---
 # --- TAB 1: DASHBOARD (HTML Table) ---
+# --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
@@ -555,6 +556,19 @@ with tab_dash:
                 <tbody>
             """)
 
+            # กำหนดรหัสสี (Hex Codes) ตามกลุ่มคอลัมน์
+            c_date = "#C5CED9"
+            c_order = "#CAC8C8"
+            c_sales = "#DDEBF7"
+            c_cost = "#E2EFDA"
+            c_fee = "#FFF2CC"
+            c_aff = "#F8CBAD"
+            c_profit = "#FCE4D6"
+            c_ads = "#B4C6E7"
+            c_ads_total = "#C6E0B4"
+            c_ops = "#D0CECE"
+            c_net = "#F4B084"
+
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
@@ -569,36 +583,36 @@ with tab_dash:
 
                 row_html = f"""
                 <tr>
-                    <td class="txt">{date_str}</td>
-                    <td class="num font-bold">{int(r['total_orders'])}</td>
-                    <td class="num">{int(r['success_count'])}</td>
-                    <td class="num">{int(r['pending_count'])}</td>
-                    <td class="num">{int(r['return_count'])}</td>
-                    <td class="num">{int(r['cancel_count'])}</td>
-                    <td class="num font-bold">{sales:,.2f}</td>
-                    <td class="num">{r['ROAS']:,.2f}</td>
-                    <td class="num">{r['manual_roas']:,.2f}</td>
-                    <td class="num">{r['cost_sum']:,.2f}</td>
-                    <td class="num">{safe_div(r['cost_sum'], sales):.1f}%</td>
-                    <td class="num">{r['fees_sum']:,.2f}</td>
-                    <td class="num">{safe_div(r['fees_sum'], sales):.1f}%</td>
-                    <td class="num">{r['affiliate_sum']:,.2f}</td>
-                    <td class="num">{safe_div(r['affiliate_sum'], sales):.1f}%</td>
-                    <td class="num font-bold text-green">{r['กำไร']:,.2f}</td>
-                    <td class="num">{safe_div(r['กำไร'], sales):.1f}%</td>
-                    <td class="num">{r['manual_ads']:,.2f}</td>
-                    <td class="num">{r['ADS VAT 7%']:,.2f}</td>
-                    <td class="num text-red">{r['ค่าแอดรวม']:,.2f}</td>
-                    <td class="num">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
-                    <td class="num">{r['ค่าดำเนินการ']:,.0f}</td>
-                    <td class="num">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
-                    <td class="num font-bold text-teal" style="position: relative;">
+                    <td class="txt" style="background-color: {c_date};">{date_str}</td>
+                    <td class="num font-bold" style="background-color: {c_order};">{int(r['total_orders'])}</td>
+                    <td class="num" style="background-color: {c_order};">{int(r['success_count'])}</td>
+                    <td class="num" style="background-color: {c_order};">{int(r['pending_count'])}</td>
+                    <td class="num" style="background-color: {c_order};">{int(r['return_count'])}</td>
+                    <td class="num" style="background-color: {c_order};">{int(r['cancel_count'])}</td>
+                    <td class="num font-bold" style="background-color: {c_sales};">{sales:,.2f}</td>
+                    <td class="num" style="background-color: {c_sales};">{r['ROAS']:,.2f}</td>
+                    <td class="num" style="background-color: {c_sales};">{r['manual_roas']:,.2f}</td>
+                    <td class="num" style="background-color: {c_cost};">{r['cost_sum']:,.2f}</td>
+                    <td class="num" style="background-color: {c_cost};">{safe_div(r['cost_sum'], sales):.1f}%</td>
+                    <td class="num" style="background-color: {c_fee};">{r['fees_sum']:,.2f}</td>
+                    <td class="num" style="background-color: {c_fee};">{safe_div(r['fees_sum'], sales):.1f}%</td>
+                    <td class="num" style="background-color: {c_aff};">{r['affiliate_sum']:,.2f}</td>
+                    <td class="num" style="background-color: {c_aff};">{safe_div(r['affiliate_sum'], sales):.1f}%</td>
+                    <td class="num font-bold text-green" style="background-color: {c_profit};">{r['กำไร']:,.2f}</td>
+                    <td class="num" style="background-color: {c_profit};">{safe_div(r['กำไร'], sales):.1f}%</td>
+                    <td class="num" style="background-color: {c_ads};">{r['manual_ads']:,.2f}</td>
+                    <td class="num" style="background-color: {c_ads};">{r['ADS VAT 7%']:,.2f}</td>
+                    <td class="num text-red" style="background-color: {c_ads_total};">{r['ค่าแอดรวม']:,.2f}</td>
+                    <td class="num" style="background-color: {c_ads_total};">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
+                    <td class="num" style="background-color: {c_ops};">{r['ค่าดำเนินการ']:,.0f}</td>
+                    <td class="num" style="background-color: {c_ops};">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
+                    <td class="num font-bold text-teal" style="background-color: {c_net}; position: relative;">
                         {net_profit:,.2f}
                         {'<div class="p-bg"><div class="p-fill" style="width: ' + str(bar_width) + '%;"></div></div>' if bar_width > 0 else ''}
                     </td>
-                    <td class="num">{safe_div(net_profit, sales):.1f}%</td>
+                    <td class="num" style="background-color: {c_net};">{safe_div(net_profit, sales):.1f}%</td>
                 </tr>"""
-                html_parts.append(row_html.replace('\n', '')) # ลบ Newline เพื่อแก้ปัญหาย่อหน้า
+                html_parts.append(row_html.replace('\n', '')) # ลบ Newline
 
             html_parts.append("</tbody></table></div>")
             st.markdown("".join(html_parts), unsafe_allow_html=True)
