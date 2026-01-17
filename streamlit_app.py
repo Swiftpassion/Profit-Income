@@ -307,6 +307,15 @@ with st.sidebar:
     st.header("🔄 ระบบดึงข้อมูล")
     st.caption("Google Drive > Database")
     
+    # --- ✅ เพิ่มปุ่ม Link ไปยัง Google Drive ตรงนี้ครับ ---
+    st.link_button(
+        "📂 ไปยัง ไดร์ฟข้อมูล (Google Drive)", 
+        "https://drive.google.com/drive/folders/1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot", 
+        use_container_width=True
+    )
+    
+    st.markdown("---") # เส้นขีดคั่นเพื่อความสวยงาม
+    
     with st.expander("🛠️ เครื่องมือ Sync", expanded=True):
         start_sync = st.button("🚀 Sync Data (ล้างเก่าลงใหม่)", type="primary", use_container_width=True)
         debug_mode = st.checkbox("โหมดตรวจสอบ (Debug)")
