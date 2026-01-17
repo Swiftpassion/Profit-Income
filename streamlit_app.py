@@ -43,10 +43,14 @@ def clean_date(df, col_name):
     return df
 
 def clean_scientific_notation(val):
-    try:
-        return str(int(float(val)))
-    except:
-        return str(val)
+    val_str = str(val)
+    # ถ้ามีตัว E (เช่น 5.76E+14) ค่อยแปลง แต่ถ้าเป็นเลขยาวๆ ปกติ ให้คืนค่าเดิมเลย
+    if 'E' in val_str or 'e' in val_str:
+        try:
+            return str(int(float(val)))
+        except:
+            return val_str
+    return val_str
 
 # --- PROCESSOR: TIKTOK ---
 def process_tiktok(order_files, income_files, shop_name):
@@ -58,7 +62,7 @@ def process_tiktok(order_files, income_files, shop_name):
         if 'xlsx' in file_info['name']:
             try:
                 f_data = download_file(file_info['id'])
-                df = pd.read_excel(f_data, sheet_name='Order details')
+                df = pd.read_excel(f_data, sheet_name='Order details', dtype=str)
                 
                 # Column Index (0-based):
                 # D(3)=Settled Time, F(5)=Settlement Amount, N(13)=Total Fees, Y(24)=Affiliate Commission, AV(47)=Order ID
