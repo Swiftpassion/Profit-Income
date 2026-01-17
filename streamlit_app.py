@@ -197,10 +197,18 @@ def process_shopee(order_files, income_files, shop_name):
     # 1. Process Income
     income_dfs = []
     for file_info in income_files:
-        if 'xls' in file_info['name']:
+        # Check for both Excel and CSV
+        if 'xls' in file_info['name'] or 'csv' in file_info['name']:
             try:
                 f_data = download_file(file_info['id'])
-                df = pd.read_excel(f_data, sheet_name='Income', header=5, dtype=str)
+                
+                # Conditional Load: CSV vs Excel
+                if 'csv' in file_info['name'].lower():
+                    # Shopee CSVs are usually raw tables, so we read directly
+                    df = pd.read_csv(f_data, dtype=str)
+                else:
+                    # Shopee Excel reports often have 5 header rows of metadata
+                    df = pd.read_excel(f_data, sheet_name='Income', header=5, dtype=str)
                 
                 rename_map = {
                     'หมายเลขคำสั่งซื้อ': 'order_id',
