@@ -40,8 +40,13 @@ def download_file(file_id):
     return fh
 
 def clean_date(df, col_name):
-    """แปลงค่าวันที่และทำให้เป็น format Date มาตรฐาน"""
-    df[col_name] = pd.to_datetime(df[col_name], errors='coerce').dt.date
+    """
+    แปลงค่าวันที่และทำให้เป็น format Date มาตรฐาน (YYYY-MM-DD)
+    ตัดเวลา (Time) ออก เหลือแต่วันที่
+    """
+    if col_name in df.columns:
+        # ใช้ dayfirst=True เผื่อเจอ format 27/12/2025
+        df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True).dt.date
     return df
 
 def clean_text(df, col_name):
@@ -157,9 +162,13 @@ def process_tiktok(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
-            # --- [FILTER]: Shipped Time ต้องมีค่า ---
+            # --- [CRITICAL FILTER]: TikTok ---
+            # ต้องมี 'Shipped Time' เท่านั้น
             if 'Shipped Time' in df.columns:
+                # 1. กรองแถวที่ไม่มี Shipped Time ออก (Drop NaNs)
                 df = df.dropna(subset=['Shipped Time'])
+                # 2. กรองแถวที่เป็นค่าว่างเปล่า (Empty Strings)
+                df = df[df['Shipped Time'].astype(str).str.strip() != '']
                 
                 cols_needed = {
                     'Order ID': 'order_id',
@@ -168,7 +177,7 @@ def process_tiktok(order_files, income_files, shop_name):
                     'Quantity': 'quantity',
                     'SKU Subtotal After Discount': 'sales_amount',
                     'Created Time': 'created_date',
-                    'Shipped Time': 'shipped_date',
+                    'Shipped Time': 'shipped_date', # Column AC
                     'Tracking ID': 'tracking_id'
                 }
                 
@@ -177,8 +186,11 @@ def process_tiktok(order_files, income_files, shop_name):
                 
                 df['shop_name'] = shop_name
                 df['platform'] = 'TIKTOK'
+                
+                # --- [Clean Date] ตัดเวลาออก ---
                 df = clean_date(df, 'created_date')
-                df = clean_date(df, 'shipped_date')
+                df = clean_date(df, 'shipped_date') # จะเหลือแค่ YYYY-MM-DD
+                
                 df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                 df = clean_text(df, 'sku') 
                 
@@ -199,14 +211,12 @@ def process_tiktok(order_files, income_files, shop_name):
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     
-    # 1. Process Income (CSV & Excel)
+    # 1. Process Income
     income_dfs = []
     for file_info in income_files:
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
-                
-                # Check extension
                 if 'csv' in file_info['name'].lower():
                     df = pd.read_csv(f_data, dtype=str)
                 else:
@@ -219,7 +229,6 @@ def process_shopee(order_files, income_files, shop_name):
                     'ค่าคอมมิชชั่น': 'affiliate',
                     'จำนวนเงินทั้งหมดที่โอนแล้ว (฿)': 'settlement_amount'
                 }
-                
                 existing_cols = [c for c in rename_map.keys() if c in df.columns]
                 df = df[existing_cols].rename(columns=rename_map)
                 
@@ -240,33 +249,33 @@ def process_shopee(order_files, income_files, shop_name):
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
-        
-        # [Strict Column Filter]
         cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
         cols_to_keep = [c for c in cols_to_keep if c in income_master.columns]
         income_master = income_master[cols_to_keep] 
-        
         income_master = income_master.drop_duplicates(subset=['order_id'])
 
-    # 2. Process Orders (CSV & Excel)
+    # 2. Process Orders
     for file_info in order_files:
         if any(ext in file_info['name'].lower() for ext in ['xls', 'csv']):
             try:
                 f_data = download_file(file_info['id'])
-                
                 if 'csv' in file_info['name'].lower():
                     df = pd.read_csv(f_data, dtype=str)
                 else:
                     df = pd.read_excel(f_data, dtype=str)
                 
-                # --- [FILTER]: เวลาการชำระสินค้า ต้องมีค่า ---
+                # --- [CRITICAL FILTER]: Shopee ---
+                # ต้องมี 'เวลาการชำระสินค้า' (Column H)
                 if 'เวลาการชำระสินค้า' in df.columns:
+                    # 1. กรองแถวที่ไม่มีเวลาชำระเงินออก
                     df = df.dropna(subset=['เวลาการชำระสินค้า'])
+                    # 2. กรองค่าว่าง
+                    df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
                     
                     cols_needed = {
                         'หมายเลขคำสั่งซื้อ': 'order_id',
                         'สถานะการสั่งซื้อ': 'status',
-                        'เวลาการชำระสินค้า': 'shipped_date',
+                        'เวลาการชำระสินค้า': 'shipped_date', # Column H
                         'เลขอ้างอิง SKU (SKU Reference No.)': 'sku',
                         'จำนวน': 'quantity',
                         'ราคาขายสุทธิ': 'sales_amount',
@@ -279,8 +288,11 @@ def process_shopee(order_files, income_files, shop_name):
 
                     df['shop_name'] = shop_name
                     df['platform'] = 'SHOPEE'
+                    
+                    # --- [Clean Date] ตัดเวลาออก ---
                     df = clean_date(df, 'created_date')
-                    df = clean_date(df, 'shipped_date')
+                    df = clean_date(df, 'shipped_date') # จะเหลือแค่ YYYY-MM-DD
+                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     df = clean_text(df, 'sku') 
                     
@@ -291,7 +303,6 @@ def process_shopee(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
     
-    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
@@ -310,15 +321,12 @@ def process_lazada(order_files, income_files, shop_name):
             try:
                 f_data = download_file(file_info['id'])
                 df = pd.read_excel(f_data, sheet_name='Income Overview', dtype=str)
-                
                 col_order = 'orderNumber' if 'orderNumber' in df.columns else df.columns[10]
                 col_date = 'วันที่ปรับปรุงเข้ายอดของฉัน' if 'วันที่ปรับปรุงเข้ายอดของฉัน' in df.columns else df.columns[2]
                 col_amount = df.columns[3]
-                
                 df = df[[col_order, col_date, col_amount]]
                 df.columns = ['order_id', 'settlement_date', 'amount']
                 df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-                
                 income_dfs.append(df)
             except Exception as e:
                 st.warning(f"Lazada Income Error {file_info['name']}: {e}")
@@ -327,12 +335,10 @@ def process_lazada(order_files, income_files, shop_name):
     if income_dfs:
         raw_income = pd.concat(income_dfs, ignore_index=True)
         raw_income['order_id'] = raw_income['order_id'].apply(clean_scientific_notation)
-        
         grouped = raw_income.groupby(['order_id', 'settlement_date']).agg(
             settlement_amount=('amount', lambda x: x[x > 0].sum()),
             fees=('amount', lambda x: x[x < 0].sum())
         ).reset_index()
-        
         grouped['affiliate'] = 0
         income_master = grouped
 
@@ -342,9 +348,13 @@ def process_lazada(order_files, income_files, shop_name):
             f_data = download_file(file_info['id'])
             df = pd.read_excel(f_data, dtype=str)
             
-            # --- [FILTER]: trackingCode ต้องมีค่า ---
+            # --- [CRITICAL FILTER]: Lazada ---
+            # ต้องมี 'trackingCode' เท่านั้น (Column BG)
             if 'trackingCode' in df.columns:
+                # 1. กรองแถวที่ไม่มี Tracking Code ออก
                 df = df.dropna(subset=['trackingCode'])
+                # 2. กรองค่าว่าง
+                df = df[df['trackingCode'].astype(str).str.strip() != '']
                 
                 cols_needed = {
                     'orderNumber': 'order_id',
@@ -361,8 +371,11 @@ def process_lazada(order_files, income_files, shop_name):
                 df['quantity'] = 1
                 df['shop_name'] = shop_name
                 df['platform'] = 'LAZADA'
+                
+                # --- [Clean Date] ตัดเวลาออก ---
                 df = clean_date(df, 'created_date')
                 df = clean_date(df, 'shipped_date')
+                
                 df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                 df = clean_text(df, 'sku') 
                 
@@ -371,7 +384,6 @@ def process_lazada(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
     
-    # Deduplication
     if not final_df.empty:
         final_df = final_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
@@ -389,7 +401,7 @@ with tab1:
     with col_sync:
         start_sync = st.button("🚀 Sync Data from Google Drive")
     with col_debug:
-        debug_mode = st.checkbox("🐞 Enable Debug Mode (Show raw data)")
+        debug_mode = st.checkbox("🐞 Enable Debug Mode")
 
     if start_sync:
         st.write("🔄 **Starting Sync Process...**")
@@ -492,7 +504,6 @@ with tab1:
                         master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
 
                 # --- [IMPORTANT] Strict DB Column Filter ---
-                # ป้องกัน error: "Could not find column in schema"
                 valid_db_columns = [
                     'order_id', 'status', 'sku', 'quantity', 'sales_amount', 
                     'settlement_amount', 'fees', 'affiliate', 'net_profit', 
