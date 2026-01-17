@@ -59,6 +59,12 @@ def load_cost_data():
         if not df.empty:
             df['unit_cost'] = pd.to_numeric(df['unit_cost'], errors='coerce').fillna(0)
             df['platform'] = df['platform'].str.upper().str.strip()
+            df['sku'] = df['sku'].str.strip() # Remove spaces to match better
+            
+            # --- CRITICAL FIX: Deduplicate Costs ---
+            # If an SKU appears twice for the same platform, keep the last one (or first)
+            df = df.drop_duplicates(subset=['sku', 'platform'], keep='last')
+            
             return df[['sku', 'platform', 'unit_cost']]
         else:
             return pd.DataFrame()
@@ -340,7 +346,7 @@ def process_lazada(order_files, income_files, shop_name):
 
     # [FIX] Add this line
     final_df = final_df.drop_duplicates()
-    
+
     if not income_master.empty:
         income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
@@ -396,6 +402,9 @@ with tab1:
             # --- 2. รวมและคำนวณ (แบบไม่รวมสินค้าซ้ำ) ---
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
+                # [FIX] Deduplicate Master DF immediately after concat
+                # This protects against reading the same file twice
+                master_df = master_df.drop_duplicates()
                 st.info(f"📊 ข้อมูลดิบ: {len(master_df)} แถว -> กำลังประมวลผล...")
 
                 # แปลงตัวเลข
