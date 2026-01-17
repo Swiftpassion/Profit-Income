@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np  # Import numpy globally
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from supabase import create_client, Client
 import io
 import datetime
+import math
 
 # --- CONFIGURATION ---
 PARENT_FOLDER_ID = '1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot'
@@ -424,7 +426,7 @@ with tab1:
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
                 
-                # Deduplication Final Safety Check (Double Layer)
+                # Deduplication Final Safety Check
                 before_dedup = len(master_df)
                 master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
                 after_dedup = len(master_df)
@@ -435,7 +437,6 @@ with tab1:
                 st.info(f"📊 ข้อมูลสุทธิ: {len(master_df)} แถว -> กำลังประมวลผล...")
 
                 # แปลงตัวเลข
-                import numpy as np
                 cols_num = ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'unit_cost']
                 for col in cols_num:
                     if col in master_df.columns:
@@ -465,7 +466,6 @@ with tab1:
                 # --- 3. ดึงต้นทุน & คำนวณกำไร ---
                 cost_df = load_cost_data()
                 if not cost_df.empty:
-                    # Merge โดยใช้ sku ที่ clean แล้วทั้งคู่
                     master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
                     if 'unit_cost_y' in master_df.columns:
                         master_df['unit_cost'] = master_df['unit_cost_y'].fillna(0)
@@ -478,9 +478,6 @@ with tab1:
                 master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
 
                 # Format ข้อมูล
-                master_df = master_df.replace([np.inf, -np.inf], 0)
-                master_df = master_df.where(pd.notnull(master_df), None)
-                
                 for col in ['created_date', 'shipped_date', 'settlement_date']:
                     if col in master_df.columns:
                         master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
@@ -503,12 +500,26 @@ with tab1:
                 error_count = 0
                 progress_bar = st.progress(0)
                 
+                # --- [NUCLEAR SANITIZER] ---
+                # Fix for "Out of range float values are not JSON compliant: nan"
                 for i in range(0, len(records), chunk_size):
                     chunk = records[i:i + chunk_size]
+                    
+                    # Sanitize chunk manually
+                    clean_chunk = []
+                    for row in chunk:
+                        clean_row = {}
+                        for k, v in row.items():
+                            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                                clean_row[k] = 0.0 # Force 0 for bad floats
+                            else:
+                                clean_row[k] = v
+                        clean_chunk.append(clean_row)
+
                     try:
                         # ใช้ insert แทน upsert (เพราะเราล้างตารางแล้ว)
-                        supabase.table("orders").insert(chunk).execute()
-                        total_uploaded += len(chunk)
+                        supabase.table("orders").insert(clean_chunk).execute()
+                        total_uploaded += len(clean_chunk)
                     except Exception as e:
                         error_count += 1
                         st.error(f"❌ Upload Error (Chunk {i}): {e}")
