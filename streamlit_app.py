@@ -266,7 +266,7 @@ def process_shopee(order_files, income_files, shop_name):
     final_df = pd.concat(all_orders, ignore_index=True)
     
     # [FIX 2] CRITICAL: Drop exact duplicates caused by file overlaps
-    final_df = final_df.drop_duplicates()
+    #final_df = final_df.drop_duplicates()
 
     if not income_master.empty:
         # Group income by order_id to prevent exploding rows during merge
