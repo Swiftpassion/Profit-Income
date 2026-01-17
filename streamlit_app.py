@@ -14,7 +14,7 @@ import math
 # --- 1. CONFIGURATION & CSS ---
 st.set_page_config(page_title="Dashboard สรุปยอดขาย", layout="wide", page_icon="🛍️")
 
-# Custom CSS
+# Custom CSS: ปรับแต่งตาราง HTML ให้สวยงาม เหมือน Excel/Google Sheets
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
@@ -23,61 +23,63 @@ st.markdown("""
         font-family: 'Kanit', sans-serif;
     }
 
-    /* CSS สำหรับตาราง HTML */
-    .custom-table-container {
+    /* Container สำหรับตารางที่เลื่อนซ้ายขวาได้ */
+    .custom-table-wrapper {
         overflow-x: auto;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-top: 20px;
-        border: 1px solid #e0e0e0;
-    }
-    
-    table.report-table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 1500px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-top: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         background-color: white;
     }
     
+    /* ตัวตาราง */
+    table.report-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1800px; /* บังคับกว้างเพื่อให้ Scroll ได้ */
+        font-size: 13px;
+    }
+    
+    /* หัวตาราง (Sticky Header) */
     table.report-table th {
         background-color: #2c3e50;
         color: white;
-        padding: 12px 8px;
+        padding: 10px 5px;
         text-align: center;
         font-weight: 500;
         border: 1px solid #34495e;
         position: sticky;
         top: 0;
-        z-index: 10;
-        white-space: nowrap;
+        z-index: 100;
+        white-space: nowrap; /* ห้ามตัดบรรทัด */
     }
     
+    /* เซลล์ข้อมูล */
     table.report-table td {
-        padding: 10px 8px;
-        border: 1px solid #ecf0f1;
-        color: #2c3e50;
-        font-size: 14px;
+        padding: 8px 5px;
+        border: 1px solid #e0e0e0;
+        color: #333;
         vertical-align: middle;
     }
 
-    table.report-table tr:nth-child(even) { background-color: #f8f9fa; }
-    table.report-table tr:hover { background-color: #e8f6f3; transition: 0.2s; }
+    /* สีพื้นหลังสลับบรรทัด */
+    table.report-table tr:nth-child(even) { background-color: #f9f9f9; }
+    table.report-table tr:hover { background-color: #f0f8ff; transition: 0.2s; }
 
-    .num-cell { text-align: right; }
-    .text-cell { text-align: center; }
+    /* จัดแนวตัวเลขและข้อความ */
+    .num { text-align: right; font-family: 'Courier New', monospace; font-weight: 600; }
+    .txt { text-align: center; }
     
-    .progress-bg {
-        background-color: #e0e0e0;
-        border-radius: 4px;
-        width: 100%;
-        height: 6px;
-        margin-top: 5px;
-    }
-    .progress-fill {
-        background-color: #27ae60;
-        height: 100%;
-        border-radius: 4px;
-    }
+    /* Progress Bar ใน HTML */
+    .p-bg { background-color: #eee; border-radius: 3px; width: 100%; height: 6px; margin-top: 4px; }
+    .p-fill { background-color: #27ae60; height: 100%; border-radius: 3px; }
+    
+    /* Utility Classes สำหรับสีตัวอักษร */
+    .text-green { color: #27ae60; }
+    .text-red { color: #c0392b; }
+    .text-teal { color: #16a085; }
+    .font-bold { font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -141,6 +143,13 @@ def get_standard_status(row):
     if any(x in raw_status for x in ['ยกเลิก', 'cancel']): return "ยกเลิก"
     if any(x in raw_status for x in ['package returned', 'return', 'ตีกลับ']): return "ตีกลับ"
     return "รอดำเนินการ"
+
+def format_thai_date(d_obj):
+    """แปลงวันที่เป็นรูปแบบไทย เช่น 1 ม.ค. 2026"""
+    if pd.isnull(d_obj): return "-"
+    thai_months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+    # ใช้ปี ค.ศ. ตามที่ User ขอ (2026) ถ้าต้องการ พ.ศ. ให้ +543
+    return f"{d_obj.day} {thai_months[d_obj.month-1]} {d_obj.year}"
 
 def load_cost_data():
     try:
@@ -401,7 +410,7 @@ tab_dash, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Das
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # Filters
+    # 1. Filters
     col_filters = st.columns([1, 1, 1, 1])
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     today = datetime.datetime.now().date()
@@ -504,9 +513,12 @@ with tab_dash:
             calc['ค่าดำเนินการ'] = (calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']) * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # HTML Table Building
-            table_header = """
-            <div class="custom-table-container">
+            # --- HTML GENERATION (Robust Fix) ---
+            
+            # 1. Header
+            html_parts = []
+            html_parts.append("""
+            <div class="custom-table-wrapper">
             <table class="report-table">
                 <thead>
                     <tr>
@@ -527,50 +539,56 @@ with tab_dash:
                     </tr>
                 </thead>
                 <tbody>
-            """
+            """)
 
-            table_rows = []
+            # 2. Rows
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
                 max_profit = calc['กำไรสุทธิ'].max() if calc['กำไรสุทธิ'].max() > 0 else 100
                 bar_width = min(max(0, (net_profit / max_profit) * 100), 100)
                 
+                # Format Date to Thai
+                date_str = format_thai_date(r['created_date'])
+
                 row_html = f"""
                 <tr>
-                    <td class="text-cell">{r['created_date'].strftime('%d %b %Y')}</td>
-                    <td class="num-cell">{int(r['success_count'])}</td>
-                    <td class="num-cell">{int(r['pending_count'])}</td>
-                    <td class="num-cell">{int(r['return_count'])}</td>
-                    <td class="num-cell">{int(r['cancel_count'])}</td>
-                    <td class="num-cell" style="font-weight:bold;">{sales:,.2f}</td>
-                    <td class="num-cell">{r['ROAS']:,.2f}</td>
-                    <td class="num-cell">{r['cost_sum']:,.2f}</td>
-                    <td class="num-cell">{safe_div(r['cost_sum'], sales):.1f}%</td>
-                    <td class="num-cell">{r['fees_sum']:,.2f}</td>
-                    <td class="num-cell">{safe_div(r['fees_sum'], sales):.1f}%</td>
-                    <td class="num-cell">{r['affiliate_sum']:,.2f}</td>
-                    <td class="num-cell">{safe_div(r['affiliate_sum'], sales):.1f}%</td>
-                    <td class="num-cell" style="color: green; font-weight:bold;">{r['กำไร']:,.2f}</td>
-                    <td class="num-cell">{safe_div(r['กำไร'], sales):.1f}%</td>
-                    <td class="num-cell">{r['manual_ads']:,.2f}</td>
-                    <td class="num-cell">{r['manual_roas']:,.2f}</td>
-                    <td class="num-cell">{r['ADS VAT 7%']:,.2f}</td>
-                    <td class="num-cell" style="color: #c0392b;">{r['ค่าแอดรวม']:,.2f}</td>
-                    <td class="num-cell">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
-                    <td class="num-cell">{r['ค่าดำเนินการ']:,.0f}</td>
-                    <td class="num-cell">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
-                    <td class="num-cell" style="font-weight:bold; color: #16a085;">
+                    <td class="txt">{date_str}</td>
+                    <td class="num">{int(r['success_count'])}</td>
+                    <td class="num">{int(r['pending_count'])}</td>
+                    <td class="num">{int(r['return_count'])}</td>
+                    <td class="num">{int(r['cancel_count'])}</td>
+                    <td class="num font-bold">{sales:,.2f}</td>
+                    <td class="num">{r['ROAS']:,.2f}</td>
+                    <td class="num">{r['cost_sum']:,.2f}</td>
+                    <td class="num">{safe_div(r['cost_sum'], sales):.1f}%</td>
+                    <td class="num">{r['fees_sum']:,.2f}</td>
+                    <td class="num">{safe_div(r['fees_sum'], sales):.1f}%</td>
+                    <td class="num">{r['affiliate_sum']:,.2f}</td>
+                    <td class="num">{safe_div(r['affiliate_sum'], sales):.1f}%</td>
+                    <td class="num font-bold text-green">{r['กำไร']:,.2f}</td>
+                    <td class="num">{safe_div(r['กำไร'], sales):.1f}%</td>
+                    <td class="num">{r['manual_ads']:,.2f}</td>
+                    <td class="num">{r['manual_roas']:,.2f}</td>
+                    <td class="num">{r['ADS VAT 7%']:,.2f}</td>
+                    <td class="num text-red">{r['ค่าแอดรวม']:,.2f}</td>
+                    <td class="num">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
+                    <td class="num">{r['ค่าดำเนินการ']:,.0f}</td>
+                    <td class="num">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
+                    <td class="num font-bold text-teal">
                         {net_profit:,.2f}
-                        <div class="progress-bg"><div class="progress-fill" style="width: {bar_width}%;"></div></div>
+                        <div class="p-bg"><div class="p-fill" style="width: {bar_width}%;"></div></div>
                     </td>
-                    <td class="num-cell">{safe_div(net_profit, sales):.1f}%</td>
+                    <td class="num">{safe_div(net_profit, sales):.1f}%</td>
                 </tr>
                 """
-                table_rows.append(row_html)
+                html_parts.append(row_html)
             
-            final_html = table_header + "".join(table_rows) + "</tbody></table></div>"
-            st.markdown(final_html, unsafe_allow_html=True)
+            # 3. Close
+            html_parts.append("</tbody></table></div>")
+            
+            # 4. Render
+            st.markdown("".join(html_parts), unsafe_allow_html=True)
 
         else: st.info("ไม่พบข้อมูล")
     except Exception as e: st.error(f"Error: {e}")
@@ -583,9 +601,6 @@ with tab_cost:
         cur_data = pd.DataFrame(res.data)
         if cur_data.empty: cur_data = pd.DataFrame(columns=['sku', 'platform', 'unit_cost'])
         
-        # Drop columns that cause issues or shouldn't be edited
-        # We only show SKU, Unit Cost, and Platform (read-only context)
-        # To fix 'hidden' error, we just select specific columns to show
         display_df = cur_data[['sku', 'unit_cost', 'platform']].copy()
         
         edited = st.data_editor(
@@ -603,7 +618,6 @@ with tab_cost:
         if st.button("💾 บันทึกต้นทุนสินค้า"):
             if not edited.empty:
                 edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
-                # We need to wipe and insert because we don't track IDs in the editor
                 supabase.table("product_costs").delete().neq("id", 0).execute()
                 supabase.table("product_costs").insert(edited.to_dict('records')).execute()
                 st.success("บันทึกสำเร็จ!")
