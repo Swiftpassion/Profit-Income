@@ -404,7 +404,7 @@ with tab1:
                 master_df = pd.concat(all_data, ignore_index=True)
                 # [FIX] Deduplicate Master DF immediately after concat
                 # This protects against reading the same file twice
-                master_df = master_df.drop_duplicates()
+                #master_df = master_df.drop_duplicates()
                 st.info(f"📊 ข้อมูลดิบ: {len(master_df)} แถว -> กำลังประมวลผล...")
 
                 # แปลงตัวเลข
