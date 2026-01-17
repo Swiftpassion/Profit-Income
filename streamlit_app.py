@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -9,7 +8,7 @@ import io
 import datetime
 
 # --- CONFIGURATION ---
-PARENT_FOLDER_ID = '1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot' 
+PARENT_FOLDER_ID = '1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot'
 
 # Supabase & Google Auth
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -51,27 +50,7 @@ def clean_scientific_notation(val):
             return val_str
     return val_str
 
-# Function to clean NaN values before JSON serialization
-def clean_nan_values(df):
-    """Replace NaN/NaT/Inf values with None or 0 before JSON serialization"""
-    df = df.replace([np.inf, -np.inf], np.nan)
-    
-    # Convert date columns to string, handling NaT
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].apply(lambda x: x.isoformat() if pd.notnull(x) else None)
-        elif pd.api.types.is_float_dtype(df[col]):
-            # Replace NaN with None for float columns
-            df[col] = df[col].where(pd.notnull(df[col]), None)
-        elif pd.api.types.is_integer_dtype(df[col]):
-            # Replace NaN with None for integer columns
-            df[col] = df[col].where(pd.notnull(df[col]), None)
-        elif pd.api.types.is_object_dtype(df[col]):
-            # For object columns (strings), replace NaN/None with None
-            df[col] = df[col].where(pd.notnull(df[col]), None)
-    
-    return df
-
+# [เพิ่มใหม่] ฟังก์ชันดึงต้นทุนจาก Supabase
 def load_cost_data():
     try:
         response = supabase.table("product_costs").select("sku, platform, unit_cost").execute()
@@ -80,8 +59,6 @@ def load_cost_data():
         if not df.empty:
             df['unit_cost'] = pd.to_numeric(df['unit_cost'], errors='coerce').fillna(0)
             df['platform'] = df['platform'].str.upper().str.strip()
-            df['sku'] = df['sku'].str.strip()
-            df = df.drop_duplicates(subset=['sku', 'platform'], keep='last')
             return df[['sku', 'platform', 'unit_cost']]
         else:
             return pd.DataFrame()
@@ -89,8 +66,10 @@ def load_cost_data():
         st.error(f"Error loading Cost from DB: {e}")
         return pd.DataFrame()
 
+# [ย้ายมาไว้ตรงนี้] ฟังก์ชันจัดการหน้าต้นทุน
 def manage_costs_page():
     st.subheader("💰 จัดการต้นทุนสินค้า (Master Cost)")
+
     try:
         response = supabase.table("product_costs").select("*").execute()
         current_data = pd.DataFrame(response.data)
@@ -101,6 +80,7 @@ def manage_costs_page():
     if current_data.empty:
         current_data = pd.DataFrame(columns=['sku', 'platform', 'unit_cost'])
 
+    # Data Editor
     edited_df = st.data_editor(
         current_data,
         num_rows="dynamic",
@@ -117,9 +97,8 @@ def manage_costs_page():
     if st.button("💾 บันทึกการเปลี่ยนแปลงต้นทุน"):
         try:
             if not edited_df.empty:
-                # Clean NaN values before sending to Supabase
-                edited_df = clean_nan_values(edited_df)
                 records = edited_df.to_dict(orient='records')
+                # ลบข้อมูลเก่าทั้งหมดและลงใหม่ (วิธีง่ายที่สุดสำหรับข้อมูลไม่เยอะ)
                 supabase.table("product_costs").delete().neq("id", 0).execute()
                 supabase.table("product_costs").insert(records).execute()
                 st.success("✅ บันทึกต้นทุนเรียบร้อยแล้ว!")
@@ -156,7 +135,8 @@ def process_tiktok(order_files, income_files, shop_name):
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
-        income_master = income_master.drop_duplicates(subset=['order_id'], keep='first')
+        # Fix: Ensure Income is unique per Order ID
+        income_master = income_master.groupby('order_id').first().reset_index()
 
     # 2. Process Orders
     for file_info in order_files:
@@ -189,15 +169,18 @@ def process_tiktok(order_files, income_files, shop_name):
                 
                 all_orders.append(df)
 
-    if not all_orders: 
-        return pd.DataFrame()
-
+    if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
-    final_df = final_df.drop_duplicates(subset=['order_id', 'sku', 'shop_name'])
-    
+
+    # --- [BUG FIX HERE] ---
+    # ถ้ามีไฟล์ซ้ำกันหลายไฟล์ (ช่วงวันที่ทับซ้อน) ข้อมูลจะเบิ้ล
+    # ลบข้อมูลซ้ำโดยดูจาก Order ID และ SKU (เก็บรายการแรกที่เจอ)
+    if not final_df.empty:
+        final_df = final_df.drop_duplicates(subset=['order_id', 'sku'])
+    # ----------------------
+
     if not income_master.empty:
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
-    
     return final_df
 
 # --- PROCESSOR: SHOPEE ---
@@ -205,7 +188,7 @@ def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     
     # 1. Process Income
-    income_dfs = []
+    income_dfs = [] # <--- Fixed Typo (removed 'a')
     for file_info in income_files:
         if 'xls' in file_info['name']:
             try:
@@ -240,7 +223,9 @@ def process_shopee(order_files, income_files, shop_name):
     if income_dfs:
         income_master = pd.concat(income_dfs, ignore_index=True)
         income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
-        income_master = income_master.drop_duplicates(subset=['order_id'], keep='first')
+        cols_to_keep = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
+        cols_to_keep = [c for c in cols_to_keep if c in income_master.columns]
+        income_master = income_master[cols_to_keep]
 
     # 2. Process Orders
     for file_info in order_files:
@@ -273,15 +258,16 @@ def process_shopee(order_files, income_files, shop_name):
                 
                 all_orders.append(df)
 
-    if not all_orders: 
-        return pd.DataFrame()
-    
+    if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
-    final_df = final_df.drop_duplicates(subset=['order_id', 'sku', 'shop_name'])
+    
+    # Optional: Deduplicate Shopee as well to be safe
+    if not final_df.empty:
+        final_df = final_df.drop_duplicates(subset=['order_id', 'sku'])
 
     if not income_master.empty:
+        income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
-    
     return final_df
 
 # --- PROCESSOR: LAZADA ---
@@ -298,7 +284,7 @@ def process_lazada(order_files, income_files, shop_name):
                 
                 col_order = 'orderNumber' if 'orderNumber' in df.columns else df.columns[10]
                 col_date = 'วันที่ปรับปรุงเข้ายอดของฉัน' if 'วันที่ปรับปรุงเข้ายอดของฉัน' in df.columns else df.columns[2]
-                col_amount = df.columns[3] 
+                col_amount = df.columns[3]
                 
                 df = df[[col_order, col_date, col_amount]]
                 df.columns = ['order_id', 'settlement_date', 'amount']
@@ -312,7 +298,6 @@ def process_lazada(order_files, income_files, shop_name):
     if income_dfs:
         raw_income = pd.concat(income_dfs, ignore_index=True)
         raw_income['order_id'] = raw_income['order_id'].apply(clean_scientific_notation)
-        raw_income = raw_income.drop_duplicates(subset=['order_id', 'settlement_date'], keep='first')
         
         grouped = raw_income.groupby(['order_id', 'settlement_date']).agg(
             settlement_amount=('amount', lambda x: x[x > 0].sum()),
@@ -320,7 +305,7 @@ def process_lazada(order_files, income_files, shop_name):
         ).reset_index()
         
         grouped['affiliate'] = 0
-        income_master = grouped.drop_duplicates(subset=['order_id'], keep='first')
+        income_master = grouped
 
     # 2. Process Orders
     for file_info in order_files:
@@ -343,7 +328,7 @@ def process_lazada(order_files, income_files, shop_name):
                 available_cols = [c for c in cols_needed.keys() if c in df.columns]
                 df = df[available_cols].rename(columns=cols_needed)
                 
-                df['quantity'] = 1 
+                df['quantity'] = 1
                 df['shop_name'] = shop_name
                 df['platform'] = 'LAZADA'
                 df = clean_date(df, 'created_date')
@@ -352,15 +337,16 @@ def process_lazada(order_files, income_files, shop_name):
                 
                 all_orders.append(df)
     
-    if not all_orders: 
-        return pd.DataFrame()
-    
+    if not all_orders: return pd.DataFrame()
     final_df = pd.concat(all_orders, ignore_index=True)
-    final_df = final_df.drop_duplicates(subset=['order_id', 'sku', 'shop_name'])
+    
+    # Optional: Deduplicate Lazada as well
+    if not final_df.empty:
+        final_df = final_df.drop_duplicates(subset=['order_id', 'sku'])
 
     if not income_master.empty:
+        income_master = income_master.groupby('order_id').first().reset_index()
         final_df = pd.merge(final_df, income_master, on='order_id', how='left')
-    
     return final_df
 
 # --- MAIN APP ---
@@ -409,38 +395,37 @@ with tab1:
                         if not df_res.empty:
                             all_data.append(df_res)
                             st.success(f"  ✅ {shop_name}: ดึงข้อมูลได้ {len(df_res)} รายการ")
-            
-            # --- 2. รวมและคำนวณ ---
+
+            # --- 2. รวมและคำนวณ (แบบไม่รวมสินค้าซ้ำ) ---
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
-                # Final deduplication across all platforms
-                master_df = master_df.drop_duplicates(subset=['order_id', 'sku', 'shop_name', 'platform'])
-                
                 st.info(f"📊 ข้อมูลดิบ: {len(master_df)} แถว -> กำลังประมวลผล...")
-                
-                duplicate_count = master_df.duplicated(subset=['order_id', 'sku', 'shop_name', 'platform']).sum()
-                if duplicate_count > 0:
-                    st.warning(f"⚠️ พบข้อมูลซ้ำซ้อน {duplicate_count} แถวหลังจากการล้างซ้ำครั้งแรก")
 
                 # แปลงตัวเลข
-                cols_num = ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate']
+                import numpy as np
+                cols_num = ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'unit_cost']
                 for col in cols_num:
                     if col in master_df.columns:
                         master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
                     else:
                         master_df[col] = 0.0
 
-                # หายอดขายรวมของทั้งออเดอร์
+                # -------------------------------------------------------------
+                # [Logic ใหม่] ไม่มีการ Group รวมบรรทัด (ปล่อยให้ซ้ำตามไฟล์)
+                # แต่ยังต้องเฉลี่ยยอดเงิน (Pro-rate) เพื่อให้กำไรถูกต้อง
+                # -------------------------------------------------------------
+                
+                # 1. หายอดขายรวมของทั้งออเดอร์
                 order_totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
                 
-                # คำนวณสัดส่วน (Ratio) และเฉลี่ยยอดเงิน
+                # 2. คำนวณสัดส่วน (Ratio)
                 ratio = master_df['sales_amount'] / order_totals.replace(0, 1)
                 
-                # เฉลี่ยยอดเงินเข้าตามสัดส่วน
-                for col in ['settlement_amount', 'fees', 'affiliate']:
-                    if col in master_df.columns:
-                        master_df[col] = master_df[col] * ratio
-
+                # 3. เฉลี่ยยอดเงินเข้าตามสัดส่วน
+                master_df['settlement_amount'] = master_df['settlement_amount'] * ratio
+                master_df['fees'] = master_df['fees'] * ratio
+                master_df['affiliate'] = master_df['affiliate'] * ratio
+                
                 # บังคับ Lazada Affiliate เป็น 0
                 if 'platform' in master_df.columns:
                     master_df.loc[master_df['platform'] == 'LAZADA', 'affiliate'] = 0
@@ -448,14 +433,8 @@ with tab1:
                 # --- 3. ดึงต้นทุน & คำนวณกำไร ---
                 cost_df = load_cost_data()
                 if not cost_df.empty:
-                    master_df = pd.merge(
-                        master_df, 
-                        cost_df, 
-                        on=['sku', 'platform'], 
-                        how='left'
-                    )
-                    # Handle duplicate column names
-                    if 'unit_cost_x' in master_df.columns and 'unit_cost_y' in master_df.columns:
+                    master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
+                    if 'unit_cost_y' in master_df.columns:
                         master_df['unit_cost'] = master_df['unit_cost_y'].fillna(0)
                         master_df = master_df.drop(columns=['unit_cost_x', 'unit_cost_y'], errors='ignore')
                 else:
@@ -465,41 +444,26 @@ with tab1:
                 master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
                 master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
 
-                # Final cleanup
-                master_df = master_df.replace([float('inf'), float('-inf')], 0)
+                # Format ข้อมูล
+                master_df = master_df.replace([np.inf, -np.inf], 0)
+                master_df = master_df.where(pd.notnull(master_df), None)
                 
-                # FIX: Clean NaN values properly before JSON serialization
-                master_df = clean_nan_values(master_df)
-                
-                # Final deduplication check before upload
-                final_duplicates = master_df.duplicated(subset=['order_id', 'sku', 'shop_name', 'platform']).sum()
-                if final_duplicates > 0:
-                    st.warning(f"⚠️ ยังพบข้อมูลซ้ำ {final_duplicates} แถว จะลบออกก่อนอัปโหลด")
-                    master_df = master_df.drop_duplicates(subset=['order_id', 'sku', 'shop_name', 'platform'])
-                
-                st.info(f"📤 พร้อมอัปโหลด {len(master_df)} แถวที่ไม่ซ้ำกัน")
+                for col in ['created_date', 'shipped_date', 'settlement_date']:
+                    if col in master_df.columns:
+                        master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
 
-                # --- 4. UPLOAD ---
-                st.warning("⚠️ กำลังล้างข้อมูลเก่าและอัปโหลดข้อมูลใหม่...")
+                # --- 4. UPLOAD (แบบล้างบาง) ---
+                st.warning("⚠️ กำลังล้างข้อมูลเก่าทั้งหมดใน Database และลงข้อมูลใหม่...")
                 
+                # 4.1 ลบข้อมูลเก่าทิ้งทั้งหมด (เพื่อให้ไม่เบิ้ล)
                 try:
                     supabase.table("orders").delete().neq("id", 0).execute()
                 except Exception as e:
                     st.error(f"ลบข้อมูลเก่าไม่สำเร็จ: {e}")
 
+                # 4.2 ลงข้อมูลใหม่ (Insert)
                 st.info("☁️ กำลังอัปโหลดข้อมูลใหม่...")
                 records = master_df.to_dict(orient='records')
-                
-                # Debug: Check for NaN in records
-                nan_count = 0
-                for record in records:
-                    for key, value in record.items():
-                        if isinstance(value, float) and (pd.isna(value) or np.isnan(value)):
-                            nan_count += 1
-                            record[key] = None
-                
-                if nan_count > 0:
-                    st.info(f"🔄 แปลงค่า NaN {nan_count} ค่าเป็น None")
                 
                 chunk_size = 500
                 total_uploaded = 0
@@ -509,14 +473,12 @@ with tab1:
                 for i in range(0, len(records), chunk_size):
                     chunk = records[i:i + chunk_size]
                     try:
+                        # ใช้ insert แทน upsert (เพราะเราล้างตารางแล้ว)
                         supabase.table("orders").insert(chunk).execute()
                         total_uploaded += len(chunk)
                     except Exception as e:
                         error_count += 1
                         st.error(f"❌ Upload Error (Chunk {i}): {e}")
-                        # Debug the problematic record
-                        if len(chunk) > 0:
-                            st.write(f"Problematic record sample: {chunk[0]}")
                     
                     progress_bar.progress(min((i + chunk_size) / len(records), 1.0))
                 
@@ -524,39 +486,66 @@ with tab1:
                     st.success(f"✅ Sync เสร็จสมบูรณ์! ({total_uploaded} รายการ)")
                     st.rerun()
                 else:
-                    st.error(f"⚠️ มี {error_count} chunk ที่ล้มเหลว")
+                    st.error("⚠️ มีบางรายการล้มเหลว")
             else:
                 st.error("❌ ไม่พบข้อมูลออเดอร์ที่ใช้ได้เลย")
 
-    # ส่วนแสดงผลสรุป
+    # ------------------------------------------------------------------
+    # ส่วนแสดงผลสรุป (Summary) - จัดเรียงคอลัมน์ภาษาไทย
+    # ------------------------------------------------------------------
     st.divider()
     st.subheader("📊 สรุปยอดขาย (Summary)")
     
     try:
+        # ดึงข้อมูลจาก Supabase มาแสดง
         response = supabase.table("orders").select("*").execute()
         db_df = pd.DataFrame(response.data)
         
         if not db_df.empty:
-            # Calculate totals for metrics
-            metrics_data = {
-                'ยอดขายรวม': db_df['sales_amount'].sum() if 'sales_amount' in db_df.columns else 0,
-                'ยอดเงินที่ได้รับ': db_df['settlement_amount'].sum() if 'settlement_amount' in db_df.columns else 0,
-                'ต้นทุนรวม': db_df['total_cost'].sum() if 'total_cost' in db_df.columns else 0,
-                'กำไรสุทธิ': db_df['net_profit'].sum() if 'net_profit' in db_df.columns else 0,
-                'ค่า Affiliate': db_df['affiliate'].sum() if 'affiliate' in db_df.columns else 0,
-                'จำนวนรายการ': len(db_df)
-            }
+            # 1. แปลงตัวเลขให้พร้อมคำนวณ
+            target_cols = ['sales_amount', 'settlement_amount', 'fees', 'affiliate', 'total_cost', 'net_profit', 'quantity']
             
-            st.metric("จำนวนรายการทั้งหมด", f"{metrics_data['จำนวนรายการ']:,}")
+            # เตรียม dict สำหรับเก็บค่าตัวเลขเพื่อใช้แสดงการ์ด (Metrics)
+            numeric_vals = {}
+            for col in target_cols:
+                if col in db_df.columns:
+                    db_df[col] = pd.to_numeric(db_df[col], errors='coerce').fillna(0)
+                    numeric_vals[col] = db_df[col].sum()
+                else:
+                    numeric_vals[col] = 0
+
+            # 2. แสดงการ์ดตัวเลขสรุป
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("ยอดขายรวม", f"{numeric_vals['sales_amount']:,.2f}")
+            c2.metric("ยอดเงินที่ได้รับ", f"{numeric_vals['settlement_amount']:,.2f}")
+            c3.metric("ต้นทุนรวม", f"{numeric_vals['total_cost']:,.2f}")
+            c4.metric("กำไรสุทธิ", f"{numeric_vals['net_profit']:,.2f}")
+            c5.metric("ค่า Affiliate", f"{numeric_vals['affiliate']:,.2f}")
+
+            # 3. แสดงตารางข้อมูลละเอียด (ตามลำดับที่คุณต้องการ)
+            st.write("📄 **รายการคำสั่งซื้อทั้งหมด**")
             
-            # Display table
+            # ลำดับคอลัมน์ (ชื่อภาษาอังกฤษใน Database)
             col_order = [
-                'order_id', 'status', 'sku', 'quantity', 'sales_amount',
-                'settlement_amount', 'net_profit', 'total_cost', 'fees',
-                'affiliate', 'settlement_date', 'created_date', 'shipped_date',
-                'tracking_id', 'shop_name', 'platform'
+                'order_id',          # เลขคำสั่งซื้อ
+                'status',            # สถานะ
+                'sku',               # รหัสสินค้า
+                'quantity',          # จำนวน
+                'sales_amount',      # ยอดขาย
+                'settlement_amount', # ยอดเงินที่ได้รับ
+                'net_profit',        # กำไร
+                'total_cost',        # ต้นทุน
+                'fees',              # ค่าธรรมเนียม
+                'affiliate',         # แอฟฟิลิเอต
+                'settlement_date',   # วันที่ได้รับเงิน
+                'created_date',      # วันที่สร้างคำสั่งซื้อ
+                'shipped_date',      # วันที่ทำการสั่งซื้อสำเร็จ
+                'tracking_id',       # เลขพัสดุ
+                'shop_name',         # ชื่อร้าน
+                'platform'           # แแพลตฟอร์ม
             ]
             
+            # ชื่อภาษาไทยที่จะแสดง
             rename_map = {
                 'order_id': 'เลขคำสั่งซื้อ',
                 'status': 'สถานะ',
@@ -576,17 +565,13 @@ with tab1:
                 'platform': 'แพลตฟอร์ม'
             }
 
+            # กรองเอาเฉพาะคอลัมน์ที่มีอยู่จริง + เรียงลำดับ
             final_cols = [c for c in col_order if c in db_df.columns]
             display_df = db_df[final_cols].rename(columns=rename_map)
             
-            # Format numeric columns
-            numeric_cols = ['ยอดขาย', 'ยอดเงินที่ได้รับ', 'กำไร', 'ต้นทุน', 'ค่าธรรมเนียม', 'แอฟฟิลิเอต']
-            for col in numeric_cols:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x)
-            
+            # แสดงตาราง
             st.dataframe(
-                display_df, 
+                display_df,
                 use_container_width=True,
                 hide_index=True
             )
@@ -596,5 +581,6 @@ with tab1:
     except Exception as e:
         st.error(f"❌ เกิดข้อผิดพลาดในการโหลดข้อมูล: {e}")
 
+# ส่วน Tab 2 ต้องถอยกลับมาชิดซ้ายสุด (Level 0) ถูกแล้ว
 with tab2:
     manage_costs_page()
