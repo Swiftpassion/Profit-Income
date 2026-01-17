@@ -336,19 +336,17 @@ tab1, tab2 = st.tabs(["🚀 Sync & Dashboard", "💰 ตั้งค่าต้
 
 with tab1:
     if st.button("🚀 Sync Data from Google Drive"):
-        st.write("🔄 **Start Debugging Process...**") # Debug 1
+        st.write("🔄 **Start Debugging Process...**")
         
         with st.spinner("Connecting to Google Drive..."):
             # 1. เช็คไฟล์ในโฟลเดอร์หลัก
             root_files = list_files_in_folder(PARENT_FOLDER_ID)
-            st.write(f"📂 พบไฟล์/โฟลเดอร์ใน Drive ทั้งหมด: {len(root_files)} รายการ") # Debug 2
             
             if len(root_files) == 0:
                 st.error("❌ ไม่พบไฟล์ในโฟลเดอร์หลักเลย เช็ค PARENT_FOLDER_ID หรือสิทธิ์การเข้าถึง")
                 st.stop()
 
             folder_map = {f['name']: f['id'] for f in root_files if f['mimeType'] == 'application/vnd.google-apps.folder'}
-            st.write(f"📂 พบโฟลเดอร์ย่อย: {list(folder_map.keys())}") # Debug 3
             
             shops = {
                 'TIKTOK': ['TIKTOK 1', 'TIKTOK 2', 'TIKTOK 3'],
@@ -361,15 +359,12 @@ with tab1:
             
             # 2. เริ่มวนลูปอ่านข้อมูล
             for platform, shop_list in shops.items():
-                # st.write(f"กำลังตรวจสอบ Platform: {platform}...") 
                 inc_folder_name = income_folders.get(platform)
                 inc_files = list_files_in_folder(folder_map.get(inc_folder_name, ''))
                 
                 for shop_name in shop_list:
                     if shop_name in folder_map:
                         order_files = list_files_in_folder(folder_map[shop_name])
-                        
-                        # st.write(f"  - ร้าน {shop_name}: พบไฟล์ออเดอร์ {len(order_files)} ไฟล์")
                         
                         df_res = pd.DataFrame()
                         try:
@@ -382,37 +377,46 @@ with tab1:
                         if not df_res.empty:
                             all_data.append(df_res)
                             st.success(f"  ✅ {shop_name}: ดึงข้อมูลได้ {len(df_res)} รายการ")
-                        else:
-                            # ถ้าไฟล์มีแต่ดึงไม่ได้ อาจจะเตือนนิดหน่อย
-                            if len(order_files) > 0:
-                                st.warning(f"  ⚠️ {shop_name}: มีไฟล์แต่ดึงข้อมูลไม่ได้ (เช็ค format ไฟล์)")
 
-            # 3. รวมข้อมูล
+            # 3. รวมข้อมูลและคำนวณ
             if all_data:
                 master_df = pd.concat(all_data, ignore_index=True)
-                st.info(f"📊 รวมข้อมูลดิบทั้งหมดได้: {len(master_df)} แถว -> กำลังคำนวณกำไร...") # Debug 4
+                st.info(f"📊 รวมข้อมูลดิบได้: {len(master_df)} แถว -> กำลังคำนวณกำไร...")
                 
-                # --- ส่วนคำนวณ ---
+                # --- [ส่วนสำคัญ] จัดการ NaN ให้อยู่หมัด ---
+                import numpy as np
+                
+                # 3.1 ดึงต้นทุนมาแปะ
                 cost_df = load_cost_data()
                 if not cost_df.empty:
                     master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
                 else:
-                    st.warning("⚠️ ไม่พบข้อมูลต้นทุน (Master Cost) กำไรจะเป็น 0")
                     master_df['unit_cost'] = 0
 
-                # Fill NaNs & Calculate
-                for col in ['quantity', 'unit_cost', 'settlement_amount']:
+                # 3.2 บังคับเปลี่ยนค่าว่างในช่องตัวเลขให้เป็น 0.0 ทั้งหมด (Big Cleaning)
+                numeric_cols = [
+                    'quantity', 'unit_cost', 'total_cost', 'net_profit', 
+                    'sales_amount', 'settlement_amount', 'fees', 'affiliate'
+                ]
+                
+                for col in numeric_cols:
                     if col in master_df.columns:
                         master_df[col] = pd.to_numeric(master_df[col], errors='coerce').fillna(0)
-                
-                master_df['total_cost'] = master_df.get('quantity', 0) * master_df.get('unit_cost', 0)
-                master_df['net_profit'] = master_df.get('settlement_amount', 0) - master_df.get('total_cost', 0)
+                    else:
+                        master_df[col] = 0.0 # ถ้าไม่มีคอลัมน์ก็สร้างขึ้นมาเป็น 0 เลย
 
-                # เตรียม Upload
+                # 3.3 คำนวณกำไร (ตอนนี้มั่นใจได้ว่าไม่มี NaN มาทำให้ Error)
+                master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
+                master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
+
+                # 3.4 จัดการคอลัมน์ที่ไม่ใช่ตัวเลข (วันที่, ข้อความ) ให้เป็น None แทน NaN
+                # (เพราะ JSON รับ None ได้ แต่รับ NaN ไม่ได้)
+                master_df = master_df.replace([np.inf, -np.inf], 0)
                 master_df = master_df.where(pd.notnull(master_df), None)
+                
                 for col in ['created_date', 'shipped_date', 'settlement_date']:
                     if col in master_df.columns:
-                        master_df[col] = master_df[col].astype(str)
+                        master_df[col] = master_df[col].astype(str).replace({'nan': None, 'None': None})
 
                 # 4. Upload ขึ้น Supabase
                 st.info("☁️ กำลังอัปโหลดขึ้น Database...")
@@ -442,7 +446,6 @@ with tab1:
                     st.error("⚠️ Sync เสร็จสิ้นแต่มีบางรายการล้มเหลว ลองเช็ค Error ด้านบน")
             else:
                 st.error("❌ ไม่พบข้อมูลออเดอร์ที่ใช้ได้เลย (all_data ว่างเปล่า)")
-                st.info("คำแนะนำ: ลองเปิดไฟล์ Excel ใน Drive ดูว่ามีข้อมูลไหม หรือชื่อ Sheet ตรงกับโค้ดไหม")
 
     # [แก้ไข] ย่อหน้าเข้ามา 1 Step (4 เคาะ) เพื่อให้อยู่ใน with tab1:
     st.divider()
