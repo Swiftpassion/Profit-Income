@@ -411,8 +411,9 @@ with tab1:
             else:
                 st.warning("No data found.")
 
-    st.divider()
+st.divider()
     st.subheader("📊 สรุปยอดขาย (Summary)")
+    
     try:
         # ดึงข้อมูลจาก Supabase มาแสดง
         response = supabase.table("orders").select("*").execute()
