@@ -702,7 +702,7 @@ with tab_ads:
         except Exception as e:
             st.error(f"เกิดข้อผิดพลาด: {e}")
 
-# --- TAB 2: MASTER COST ---
+# --- TAB 3: MASTER COST ---
 with tab_cost:
     st.subheader("💰 จัดการต้นทุน (แก้ไขเฉพาะ SKU และ ราคา)")
     try:
@@ -713,11 +713,15 @@ with tab_cost:
         display_df = cur_data[['sku', 'unit_cost', 'platform']].copy()
         
         # ==================================================
-        # 🔘 ปุ่มบันทึก (ย้ายมาไว้ด้านบน)
+        # 🔘 ปุ่มบันทึก + ℹ️ ข้อความแจ้งเตือน
         # ==================================================
-        col_c_btn, _ = st.columns([1, 4])
+        col_c_btn, col_c_info = st.columns([2, 5]) # แบ่งสัดส่วน ปุ่ม : ข้อความ
+
         with col_c_btn:
             save_cost_clicked = st.button("💾 บันทึกต้นทุนสินค้า", type="primary", use_container_width=True)
+        
+        with col_c_info:
+            st.info("สามารถใส่รายการสินค้าทุกแพลตฟอร์มลงในตารางด้านล่างได้เลย")
         
         # ตาราง Data Editor (Height 1000)
         edited = st.data_editor(
@@ -733,14 +737,14 @@ with tab_cost:
             height=1000
         )
         
-        # Logic บันทึก (ทำงานเมื่อปุ่มด้านบนถูกกด)
+        # Logic บันทึก
         if save_cost_clicked:
             if not edited.empty:
                 edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
                 supabase.table("product_costs").delete().neq("id", 0).execute()
                 supabase.table("product_costs").insert(edited.to_dict('records')).execute()
                 st.success("✅ บันทึกต้นทุนสำเร็จ!")
-                # st.rerun() # เปิดบรรทัดนี้ถ้าต้องการให้โหลดหน้าใหม่ทันที
+                # st.rerun() 
     except Exception as e: st.error(f"Error Cost: {e}")
 
 # --- TAB 3: OLD TABLE ---
