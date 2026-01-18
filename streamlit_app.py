@@ -178,48 +178,64 @@ def load_cost_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-def find_header_row(data_io, keywords):
+def find_header_row(data_io, required_keywords):
     """
-    สแกน 10 บรรทัดแรก เพื่อหาว่าบรรทัดไหนคือ Header ที่แท้จริง
-    โดยดูว่ามีคำคีย์เวิร์ดที่ต้องการหรือไม่
+    สแกน 20 บรรทัดแรก เพื่อหาว่าบรรทัดไหนคือ Header ที่แท้จริง
+    โดยบรรทัดนั้นต้องมีคำคีย์เวิร์ดที่ระบุไว้อย่างน้อย 1 คำ (หรือทั้งหมดถ้าจำเป็น)
     """
     data_io.seek(0)
     try:
-        # อ่านแค่ 10 บรรทัดแรกมาเช็ค
-        preview = pd.read_excel(data_io, header=None, nrows=10, dtype=str)
+        # อ่าน 20 บรรทัดแรกแบบไม่ระบุ Header
+        preview = pd.read_excel(data_io, header=None, nrows=20, dtype=str)
+        
+        best_row_idx = 0
+        max_matches = 0
+        
+        # วนลูปเช็คทีละบรรทัด
         for i, row in preview.iterrows():
-            row_text = " ".join([str(x).lower().strip() for x in row.values])
-            for k in keywords:
+            # แปลงแถวนั้นเป็นข้อความยาวๆ ตัวพิมพ์เล็ก ตัดเว้นวรรค
+            row_text = " ".join([str(x).lower().strip() for x in row.values if pd.notna(x)])
+            
+            # นับว่าเจอกี่คีย์เวิร์ดในบรรทัดนี้
+            matches = 0
+            for k in required_keywords:
                 if k.lower() in row_text:
-                    data_io.seek(0) # Reset pointer
-                    return i
+                    matches += 1
+            
+            # ถ้าพบคีย์เวิร์ดเยอะที่สุด ให้จำบรรทัดนี้ไว้
+            if matches > max_matches:
+                max_matches = matches
+                best_row_idx = i
+                
+        # ถ้าเจอแมตช์บ้าง ให้ใช้บรรทัดนั้น, ถ้าไม่เจอเลย ใช้บรรทัดแรก (0)
         data_io.seek(0)
-        return 0 # ถ้าหาไม่เจอ ให้เดาว่าเป็นบรรทัดแรก
-    except:
+        return best_row_idx if max_matches > 0 else 0
+        
+    except Exception:
         data_io.seek(0)
         return 0
 
 def get_col_data(df, candidates):
     """
-    ดึงข้อมูลคอลัมน์โดยค้นหาจากชื่อที่เป็นไปได้
-    - แก้ปัญหา: เว้นวรรคหน้าหลัง, เว้นวรรคตรงกลางเกิน, ขึ้นบรรทัดใหม่ (\n) ใน Header Excel
+    ค้นหาคอลัมน์แบบยืดหยุ่น (ตัดเว้นวรรค, ไม่สนตัวพิมพ์เล็กใหญ่, ไม่สน \n)
     """
-    # 1. สร้างรายการชื่อคอลัมน์แบบ Clean (เปลี่ยน \n เป็น space, ตัดช่องว่างเกิน, ตัวพิมพ์เล็ก)
-    # เช่น "Seller\nSKU" -> "seller sku", "Tracking   ID" -> "tracking id"
-    cols_norm = [" ".join(str(c).split()).lower() for c in df.columns]
+    # เตรียมชื่อคอลัมน์ในไฟล์ให้เป็น format มาตรฐาน (ตัวเล็ก, ตัด space เกิน, ตัด newline)
+    # ตัวอย่าง: "Seller\nSKU " -> "seller sku"
+    cols_norm = [" ".join(str(c).replace('\n', ' ').split()).lower() for c in df.columns]
     
     for cand in candidates:
-        # 2. Clean ชื่อที่เราต้องการหาให้เหมือนกัน
+        # เตรียมชื่อที่ต้องการหาให้เป็น format เดียวกัน
         cand_clean = " ".join(cand.split()).lower()
         
-        # 3. เทียบหา Index
+        # เทียบหา index
         if cand_clean in cols_norm:
             idx = cols_norm.index(cand_clean)
-            return df.iloc[:, idx] # ดึงข้อมูลจาก Index ที่เจอ
+            # คืนค่าข้อมูลคอลัมน์นั้น (ใช้ iloc เพื่อความชัวร์เรื่อง index)
+            return df.iloc[:, idx]
             
     return None
 
-# --- 3. PROCESSORS (REWRITTEN & ROBUST) ---
+# --- 3. PROCESSORS (แก้ไข process_tiktok โดยเฉพาะ) ---
 
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
@@ -229,51 +245,60 @@ def process_tiktok(order_files, income_files, shop_name):
             try:
                 data = download_file(f['id'])
                 
-                # 1. สแกนหาบรรทัด Header (บางทีไม่ได้อยู่บรรทัดแรก)
-                header_idx = find_header_row(data, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
+                # 1. ค้นหา Header Row แบบเข้มข้น (ต้องเจอทั้ง Order ID และ SKU ถึงจะยอมรับ)
+                # เพื่อป้องกันการไปอ่านบรรทัดที่เป็น Title หรือ Description
+                header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Quantity', 'Product Name'])
                 
-                # อ่านไฟล์โดยใช้ Header ที่หาเจอ
+                # อ่านไฟล์ใหม่เริ่มจากบรรทัดที่หาเจอ
                 df = pd.read_excel(data, header=header_idx, dtype=str)
                 
                 extracted = pd.DataFrame()
                 
-                # 2. ดึง Order ID (ถ้าไม่มีคือจบ)
+                # 2. เริ่มดึงข้อมูล (ใช้รายชื่อคอลัมน์จากที่คุณให้มา + ภาษาไทย)
+                
+                # Order ID
                 oid = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
-                if oid is None: continue
+                if oid is None: continue # ถ้าไม่มีเลข Order คือจบ ข้ามไฟล์นี้
                 extracted['order_id'] = oid
 
-                # 3. ดึงคอลัมน์ต่างๆ (ชื่อไทย/อังกฤษ/มี Newline ก็จะหาเจอ)
-                extracted['status'] = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ', 'Status'])
-                if 'status' not in extracted.columns: extracted['status'] = 'สำเร็จ'
+                # Status
+                status = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ', 'Status'])
+                extracted['status'] = status if status is not None else 'สำเร็จ'
 
-                # Seller SKU (แก้ปัญหา Seller\nSKU)
+                # SKU (Seller SKU)
                 sku = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID', 'SKU'])
                 extracted['sku'] = sku if sku is not None else '-'
 
-                # Quantity (แก้ปัญหา Quantity\n)
+                # Product Name
+                pname = get_col_data(df, ['Product Name', 'ชื่อสินค้า', 'Product'])
+                extracted['product_name'] = pname if pname is not None else '-'
+
+                # Quantity (ระวังเรื่อง Type)
                 qty = get_col_data(df, ['Quantity', 'จำนวน', 'Qty'])
                 extracted['quantity'] = pd.to_numeric(qty, errors='coerce').fillna(1) if qty is not None else 1
 
-                # Sales Amount (ยอดขาย)
-                sales = get_col_data(df, ['SKU Subtotal After Discount', 'ยอดรวม SKU หลังหักส่วนลด', 'Order Amount', 'ยอดคำสั่งซื้อ'])
+                # Sales Amount (ยอดขาย - เน้นหา SKU Subtotal After Discount ตามที่คุณระบุ)
+                # ลำดับการหา: After Discount -> Order Amount -> Unit Price
+                sales = get_col_data(df, ['SKU Subtotal After Discount', 'ยอดรวม SKU หลังหักส่วนลด', 'Order Amount', 'ยอดคำสั่งซื้อ', 'Unit Price'])
                 extracted['sales_amount'] = pd.to_numeric(sales, errors='coerce').fillna(0) if sales is not None else 0
 
-                extracted['created_date'] = get_col_data(df, ['Created Time', 'เวลาที่สร้าง', 'Order Creation Time'])
-                extracted['shipped_date'] = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
+                # Dates
+                c_date = get_col_data(df, ['Created Time', 'เวลาที่สร้าง', 'Order Creation Time'])
+                extracted['created_date'] = c_date
                 
-                # Tracking ID (แก้ปัญหา Tracking\nID)
+                s_date = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
+                extracted['shipped_date'] = s_date
+
+                # Tracking
                 track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ', 'Tracking Number'])
                 extracted['tracking_id'] = track if track is not None else '-'
                 
-                p_name = get_col_data(df, ['Product Name', 'ชื่อสินค้า', 'Product'])
-                extracted['product_name'] = p_name if p_name is not None else '-'
-
-                # Affiliate ไม่มีในไฟล์ Order ปกติ ให้เป็น 0 ไปก่อน
-                extracted['affiliate'] = 0 
-                
-                # ข้อมูลคงที่
+                # ค่าอื่นๆ ที่ไม่มีในไฟล์ Order ให้เป็น 0 (ต้องรอไฟล์ Income หรือคำนวณเอา)
                 extracted['settlement_amount'] = 0
                 extracted['fees'] = 0
+                extracted['affiliate'] = 0 # Affiliate ปกติไม่อยู่ในไฟล์ Order นี้
+                
+                # Metadata
                 extracted['shop_name'] = shop_name
                 extracted['platform'] = 'TIKTOK'
 
@@ -282,6 +307,9 @@ def process_tiktok(order_files, income_files, shop_name):
                 extracted = clean_date(extracted, 'shipped_date')
                 extracted['order_id'] = extracted['order_id'].apply(clean_scientific_notation)
                 extracted = clean_text(extracted, 'sku')
+                
+                # Check Data Validity: ถ้า Order ID เป็นค่าว่าง ให้ลบทิ้ง
+                extracted = extracted[extracted['order_id'].notna() & (extracted['order_id'] != '')]
 
                 all_orders.append(extracted)
 
@@ -289,7 +317,9 @@ def process_tiktok(order_files, income_files, shop_name):
                 st.error(f"❌ TikTok {f['name']}: {e}")
                 continue
 
-    if not all_orders: return pd.DataFrame()
+    if not all_orders: 
+        return pd.DataFrame()
+        
     return pd.concat(all_orders, ignore_index=True)
 
 def process_shopee(order_files, income_files, shop_name):
