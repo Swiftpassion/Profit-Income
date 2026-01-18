@@ -389,11 +389,11 @@ def process_shopee(order_files, income_files, shop_name):
                 
                 # ใช้ Smart Search ดึงข้อมูลการเงิน
                 inc = pd.DataFrame()
-                inc['order_id'] = get_col_data(df, ['หมายเลขคำสั่งซื้อ', 'Order ID'])
-                inc['settlement_date'] = get_col_data(df, ['วันที่โอนชำระเงินสำเร็จ', 'Payout Completed Date'])
-                inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)', 'Payout Amount']), errors='coerce')
-                inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price']), errors='coerce')
-                inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น', 'Commission Fee']), errors='coerce') # Check real column name in file
+                inc['order_id'] = get_col_data(df, ['หมายเลขคำสั่งซื้อ'])
+                inc['settlement_date'] = get_col_data(df, ['วันที่โอนชำระเงินสำเร็จ'])
+                inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)']), errors='coerce')
+                inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ']), errors='coerce')
+                inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น']), errors='coerce') # Check real column name in file
                 
                 if not inc.empty and 'order_id' in inc.columns:
                     inc['fees'] = (inc['original_price'].fillna(0) - inc['settlement_amount'].fillna(0))
@@ -451,60 +451,88 @@ def process_lazada(order_files, income_files, shop_name):
 
     # --- Lazada Income ---
     for f in income_files:
-        if 'xlsx' in f['name'].lower():
+        # ตรวจสอบนามสกุลไฟล์
+        if any(ext in f['name'].lower() for ext in ['xlsx', 'xls']):
             try:
                 data = download_file(f['id'])
-                # Lazada Income มักอยู่ sheet 'Income Overview' หรือแผ่นแรก
-                df = pd.read_excel(data, sheet_name=0, dtype=str) # Read first sheet usually
                 
-                # Check columns existence logic could be added here
-                # Assuming standard format for Amount in col 3 is risky, try finding headers
-                # Lazada income files are tricky, keep simple aggregation if complex headers
-                if len(df.columns) > 3:
-                     # Simple heuristics based on common format
-                     # Col 0: Order No, Col 2: Date, Col 3: Amount
-                     temp = df.iloc[:, [0, 2, 3]].copy()
-                     temp.columns = ['order_id', 'settlement_date', 'amount']
-                     temp['amount'] = pd.to_numeric(temp['amount'], errors='coerce').fillna(0)
-                     income_dfs.append(temp)
-            except: pass
-    
+                # 1. ค้นหา Header Row (Lazada มักมีคีย์เวิร์ดเหล่านี้)
+                # รองรับทั้ง Eng และ Thai
+                header_idx = find_header_row(data, ['หมายเลขคำสั่งซื้อ','วันที่ทำรายการ','จำนวนเงิน(รวมภาษี)'])
+                
+                # 2. อ่านไฟล์
+                df = pd.read_excel(data, header=header_idx, dtype=str)
+                
+                inc = pd.DataFrame()
+                
+                # 3. ดึงข้อมูลดิบ
+                oid = get_col_data(df, ['หมายเลขคำสั่งซื้อ'])
+                if oid is None: continue # ถ้าหาเลข Order ไม่เจอ ข้ามไฟล์นี้
+                inc['order_id'] = oid
+                
+                inc['settlement_date'] = get_col_data(df, ['วันที่ทำรายการ'])
+                
+                # ยอดเงิน (Amount) ต้องแปลงเป็นตัวเลข
+                amt_col = get_col_data(df, ['จำนวนเงิน(รวมภาษี)'])
+                inc['settlement_amount'] = pd.to_numeric(amt_col, errors='coerce').fillna(0)
+                
+                # Clean Order ID (Scientific notation removal)
+                inc['order_id'] = inc['order_id'].apply(clean_scientific_notation)
+                
+                income_dfs.append(inc)
+                
+            except Exception as e:
+                # st.warning(f"Lazada Income Warning {f['name']}: {e}")
+                pass
+
+    # --- รวมและจัดการข้อมูล Income (Group & Sum) ---
     income_master = pd.DataFrame()
     if income_dfs:
-        raw = pd.concat(income_dfs, ignore_index=True)
-        raw['order_id'] = raw['order_id'].apply(clean_scientific_notation)
-        income_master = raw.groupby(['order_id']).agg(
-            settlement_amount=('amount', 'sum'),
-            fees=('amount', lambda x: abs(x[x<0].sum())), # Lazada fees are negative values
-            settlement_date=('settlement_date', 'first')
-        ).reset_index()
+        raw_income = pd.concat(income_dfs, ignore_index=True)
+        
+        # 1. Group rows by order_id
+        # 2. Sum settlement_amount
+        # 3. Select 1st row of settlement_date
+        income_master = raw_income.groupby('order_id').agg({
+            'settlement_amount': 'sum',
+            'settlement_date': 'first'
+        }).reset_index()
+        
+        # 4. Apply clean_date function
+        income_master = clean_date(income_master, 'settlement_date')
+        
+        # 5. Set fixed columns as requested
+        income_master['original_price'] = 0
         income_master['affiliate'] = 0
-
-    # --- Lazada Orders ---
+        income_master['fees'] = 0 # ตั้งไว้ก่อน เผื่อใช้คำนวณกำไร
+        
+    # --- Lazada Orders (ดึงข้อมูลสินค้า) ---
     for f in order_files:
-        if 'xlsx' in f['name'].lower():
+        if any(ext in f['name'].lower() for ext in ['xlsx', 'xls']):
             try:
                 data = download_file(f['id'])
-                header_idx = find_header_row(data, ['orderNumber', 'Order Item Id', 'หมายเลขคำสั่งซื้อ'])
+                header_idx = find_header_row(data, ['Order Item Id', 'orderNumber', 'หมายเลขคำสั่งซื้อ'])
                 df = pd.read_excel(data, header=header_idx, dtype=str)
                 
                 ext = pd.DataFrame()
-                oid = get_col_data(df, ['orderNumber', 'หมายเลขคำสั่งซื้อ'])
+                oid = get_col_data(df, ['orderNumber'])
                 if oid is None: continue
                 
                 ext['order_id'] = oid
-                ext['status'] = get_col_data(df, ['status', 'สถานะ'])
-                ext['sku'] = get_col_data(df, ['sellerSku', 'Seller SKU'])
-                ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['unitPrice', 'paidPrice']), errors='coerce').fillna(0)
-                ext['tracking_id'] = get_col_data(df, ['trackingCode', 'Tracking Code'])
-                ext['created_date'] = get_col_data(df, ['createTime', 'Created at'])
-                ext['shipped_date'] = get_col_data(df, ['deliveredDate', 'Updated at'])
-                ext['product_name'] = get_col_data(df, ['itemName', 'Item Name'])
+                ext['status'] = get_col_data(df, ['status'])
+                ext['sku'] = get_col_data(df, ['sellerSku'])
+                # ใช้ Paid Price เป็นยอดขาย
+                ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['paidPrice']), errors='coerce').fillna(0)
+                ext['tracking_id'] = get_col_data(df, ['trackingCode'])
+                ext['created_date'] = get_col_data(df, ['createTime'])
+                ext['shipped_date'] = get_col_data(df, ['updateTime'])
+                ext['product_name'] = get_col_data(df, ['itemName'])
                 
                 ext['quantity'] = 1 # Lazada 1 row = 1 item usually
                 ext['shop_name'] = shop_name
                 ext['platform'] = 'LAZADA'
                 
+                # Cleaning
                 ext = clean_date(ext, 'created_date')
                 ext = clean_date(ext, 'shipped_date')
                 ext['order_id'] = ext['order_id'].apply(clean_scientific_notation)
@@ -512,14 +540,29 @@ def process_lazada(order_files, income_files, shop_name):
                 
                 all_orders.append(ext)
             except Exception as e:
-                st.error(f"❌ Lazada {f['name']}: {e}")
+                st.error(f"❌ Lazada Order {f['name']}: {e}")
 
     if not all_orders: return pd.DataFrame()
-    final = pd.concat(all_orders, ignore_index=True)
+    final_orders = pd.concat(all_orders, ignore_index=True)
     
+    # --- Merge Income เข้ากับ Orders ---
     if not income_master.empty:
-        return pd.merge(final, income_master, on='order_id', how='left')
-    return final
+        # แปลง ID ให้แน่ใจว่าเป็น String และตัดช่องว่าง
+        final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
+        income_master['order_id'] = income_master['order_id'].astype(str).str.strip()
+        
+        merged = pd.merge(final_orders, income_master, on='order_id', how='left')
+        
+        # เติม 0 ให้ช่องที่ไม่มีข้อมูลการเงิน
+        for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(0)
+        return merged
+    else:
+        # กรณีไม่มีไฟล์ Income เลย
+        for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
+            final_orders[col] = 0
+        return final_orders
 
 # ==========================================
 # SIDEBAR: SYNC SYSTEM
