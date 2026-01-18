@@ -514,7 +514,7 @@ with tab_dash:
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # ==========================================
-            # 3. HTML GENERATION (Dark Mode + Bar Chart + Full Totals)
+            # 3. HTML GENERATION (Dark Mode + Center Align + Full Totals)
             # ==========================================
             
             st.markdown("""
@@ -536,6 +536,7 @@ with tab_dash:
                     border: 1px solid #333; 
                     padding: 6px; 
                     vertical-align: middle; 
+                    text-align: center !important; /* ✅ บังคับจัดกึ่งกลาง */
                 }
                 
                 /* Row Colors */
@@ -553,25 +554,27 @@ with tab_dash:
                 
                 /* Utilities */
                 .text-red { color: #fa0000 !important; font-weight: bold; }
-                .num { text-align: right; }
-                .txt { text-align: center; }
+                
+                /* Alignments (Override เพื่อความชัวร์) */
+                .num { text-align: center !important; }
+                .txt { text-align: center !important; }
                 
                 /* Progress Bar (ปรับให้เข้ากับ Dark Mode) */
                 .bar-container {
                     position: absolute;
                     bottom: 0; left: 0;
-                    height: 4px; /* ความสูงเส้นบาร์ */
-                    background-color: #27ae60; /* สีเขียว */
+                    height: 4px; 
+                    background-color: #27ae60; 
                     opacity: 0.7;
                     z-index: 1;
                 }
                 .cell-content {
                     position: relative;
-                    z-index: 2; /* ตัวหนังสือต้องอยู่บนบาร์ */
+                    z-index: 2; 
                 }
                 td.relative-cell {
                     position: relative;
-                    padding-bottom: 8px; /* เพิ่มพื้นที่ให้บาร์ */
+                    padding-bottom: 8px; 
                 }
             </style>
             """, unsafe_allow_html=True)
@@ -620,7 +623,6 @@ with tab_dash:
                 if val < 0: return f'<span class="text-red">{s_val}</span>'
                 return s_val
 
-            # คำนวณ Max Profit สำหรับ Bar Chart
             max_profit = calc['กำไรสุทธิ'].max()
             if max_profit <= 0: max_profit = 1
 
@@ -629,7 +631,6 @@ with tab_dash:
                 net_profit = r['กำไรสุทธิ']
                 date_str = format_thai_date(r['created_date'])
 
-                # คำนวณความยาวบาร์
                 bar_width = 0
                 if net_profit > 0: 
                     bar_width = min((net_profit / max_profit) * 100, 100)
@@ -667,12 +668,11 @@ with tab_dash:
                         <span class="cell-content">{fmt_val(net_profit)}</span>
                         {bar_html}
                     </td>
-                    
                     <td class="num">{fmt_val(safe_div(net_profit, sales), True)}</td>
                 </tr>"""
                 html_parts.append(row_html.replace('\n', ''))
 
-            # --- TOTAL ROW CALCULATION (ปรับปรุงสูตรตามสั่ง) ---
+            # --- TOTAL ROW ---
             sum_sales = calc['sales_sum'].sum()
             sum_cost = calc['cost_sum'].sum()
             sum_fee = calc['fees_sum'].sum()
@@ -684,7 +684,6 @@ with tab_dash:
             sum_ops = calc['ค่าดำเนินการ'].sum()
             sum_net_profit = calc['กำไรสุทธิ'].sum()
             
-            # ค่าคำนวณพิเศษ
             total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
             avr_ROAS_ADS = calc['manual_roas'].mean() if len(calc) > 0 else 0
             
@@ -698,7 +697,8 @@ with tab_dash:
                 <td class="num">{int(calc['cancel_count'].sum())}</td>
                 <td class="num">{fmt_val(sum_sales)}</td>
                 <td class="num">{fmt_val(total_roas)}</td>
-                <td class="num">{fmt_val(avr_ROAS_ADS)}</td> <td class="num">{fmt_val(sum_cost)}</td>
+                <td class="num">{fmt_val(avr_ROAS_ADS)}</td>
+                <td class="num">{fmt_val(sum_cost)}</td>
                 <td class="num">{fmt_val(safe_div(sum_cost, sum_sales), True)}</td>
                 <td class="num">{fmt_val(sum_fee)}</td>
                 <td class="num">{fmt_val(safe_div(sum_fee, sum_sales), True)}</td>
