@@ -239,25 +239,25 @@ def process_tiktok(order_files, income_files, shop_name):
                         
                     else:
                         # Excel logic
-                        header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission'])
+                        header_idx = find_header_row(data, ['Related order ID', 'Total settlement amount', 'Affiliate Commission'])
                         df = pd.read_excel(data, header=header_idx, dtype=str)
                     
                     inc = pd.DataFrame()
                     # Extract Order ID
-                    oid = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ'])
+                    oid = get_col_data(df, ['Related order ID'])
                     if oid is None: continue
                     inc['order_id'] = oid
                     
                     # Extract Settlement Amount
-                    settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ'])
+                    settle = get_col_data(df, ['Total settlement amount'])
                     inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
                     
                     # Extract Affiliate
-                    aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น'])
+                    aff = get_col_data(df, ['Affiliate Commission'])
                     inc['affiliate'] = pd.to_numeric(aff, errors='coerce').fillna(0)
                     
                     # Extract Fees
-                    fee = get_col_data(df, ['Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม'])
+                    fee = get_col_data(df, ['Total Fees'])
                     inc['fees'] = pd.to_numeric(fee, errors='coerce').fillna(0)
                     
                     # Clean ID
