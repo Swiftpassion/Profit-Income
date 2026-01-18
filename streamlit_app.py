@@ -937,6 +937,7 @@ with tab_details:
         
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
+            st.info(f"Raw Query = {len(raw_df)}")
             mask = (raw_df['created_date'] >= d_start_det) & \
                    (raw_df['created_date'] <= d_end_det) & \
                    (raw_df['platform'] == selected_platform)
@@ -1137,6 +1138,6 @@ with tab_old:
     try:
         res = supabase.table("orders").select("*").execute()
         if res.data:
-            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True, height="auto")
         else: st.info("ไม่มีข้อมูล")
     except: pass
