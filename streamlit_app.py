@@ -14,65 +14,18 @@ import math
 # --- 1. CONFIGURATION & CSS ---
 st.set_page_config(page_title="Dashboard สรุปยอดขาย", layout="wide", page_icon="🛍️")
 
-# Custom CSS: ปรับแต่งตาราง HTML ให้สวยงาม เหมือน Excel/Google Sheets
+# Custom CSS
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
-    
     html, body, [class*="css"] { font-family: 'Kanit', sans-serif; }
-
-    /* Container */
-    .custom-table-wrapper {
-        overflow-x: auto;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        margin-top: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        background-color: white;
-    }
     
-    /* Table */
-    table.report-table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 1500px; /* ลดความกว้างลงเล็กน้อยถ้าไม่จำเป็นต้องกว้างมาก */
-        font-size: 13px;
-    }
+    /* Table Styling General */
+    .custom-table-wrapper { overflow-x: auto; background-color: #1c1c1c; border-radius: 8px; padding: 10px; }
     
-    /* Header */
-    table.report-table th {
-        background-color: #2c3e50;
-        color: white;
-        padding: 8px 5px; /* ลด Padding */
-        text-align: center;
-        border: 1px solid #34495e;
-        position: sticky; top: 0; z-index: 100;
-        white-space: nowrap;
-    }
-    
-    /* Cells */
-    table.report-table td {
-        padding: 4px 6px; /* ⚠️ ปรับให้แคบลง (บนล่าง 4px, ซ้ายขวา 6px) */
-        border: 1px solid #e0e0e0;
-        color: #333;
-        vertical-align: middle;
-        height: 35px; /* ⚠️ บังคับความสูงขั้นต่ำให้เท่ากัน */
-    }
-
-    table.report-table tr:nth-child(even) { background-color: #f9f9f9; }
-    table.report-table tr:hover { background-color: #f0f8ff; }
-
-    .num { text-align: right; font-family: 'Courier New', monospace; font-weight: 600; }
-    .txt { text-align: center; white-space: nowrap; } /* เพิ่ม nowrap ให้วันที่ */
-    
-    /* Progress Bar Compact */
-    .p-bg { background-color: #eee; border-radius: 2px; width: 100%; height: 4px; margin-top: 2px; display: block;} /* ลดขนาด */
-    .p-fill { background-color: #27ae60; height: 100%; border-radius: 2px; }
-    
+    /* Helper Classes */
+    .text-red { color: #fa0000 !important; font-weight: bold; }
     .text-green { color: #27ae60; }
-    .text-red { color: #c0392b; }
-    .text-teal { color: #16a085; }
-    .font-bold { font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -138,10 +91,12 @@ def get_standard_status(row):
     return "รอดำเนินการ"
 
 def format_thai_date(d_obj):
-    """แปลงวันที่เป็นรูปแบบไทย เช่น 1 ม.ค. 2026"""
     if pd.isnull(d_obj): return "-"
+    # แปลง string เป็น date object ถ้าจำเป็น
+    if isinstance(d_obj, str):
+        try: d_obj = datetime.datetime.strptime(d_obj, "%Y-%m-%d").date()
+        except: return d_obj
     thai_months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
-    # ใช้ปี ค.ศ. ตามที่ User ขอ (2026) ถ้าต้องการ พ.ศ. ให้ +543
     return f"{d_obj.day} {thai_months[d_obj.month-1]} {d_obj.year}"
 
 def load_cost_data():
@@ -156,10 +111,13 @@ def load_cost_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 3. PROCESSORS (Logic เดิม) ---
+# --- 3. PROCESSORS ---
+
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
+    
+    # Income Processing
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -173,6 +131,7 @@ def process_tiktok(order_files, income_files, shop_name):
             except: pass
     income_master = pd.concat(income_dfs, ignore_index=True).groupby('order_id').first().reset_index() if income_dfs else pd.DataFrame()
 
+    # Order Processing
     for f in order_files:
         if 'xlsx' in f['name']:
             try:
@@ -181,13 +140,20 @@ def process_tiktok(order_files, income_files, shop_name):
                 if 'Shipped Time' in df.columns:
                     df = df.dropna(subset=['Shipped Time'])
                     df = df[df['Shipped Time'].astype(str).str.strip() != '']
+                    
+                    # Mapping Columns (Updated: Product Name from Column H which is usually 'Product Name')
+                    # หา Column Product Name (ปกติ TikTok Export จะชื่อ "Product Name")
+                    prod_col = 'Product Name' if 'Product Name' in df.columns else df.columns[7] # Fallback to index H
+                    
                     cols = {'Order ID':'order_id', 'Order Status':'status', 'Seller SKU':'sku', 'Quantity':'quantity', 
                             'SKU Subtotal After Discount':'sales_amount', 'Created Time':'created_date', 
-                            'Shipped Time':'shipped_date', 'Tracking ID':'tracking_id'}
+                            'Shipped Time':'shipped_date', 'Tracking ID':'tracking_id', prod_col: 'product_name'}
+                    
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'TIKTOK'
                     df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
     
@@ -198,6 +164,8 @@ def process_tiktok(order_files, income_files, shop_name):
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
+    
+    # Income Processing
     for f in income_files:
         if any(x in f['name'].lower() for x in ['xls', 'csv']):
             try:
@@ -217,6 +185,7 @@ def process_shopee(order_files, income_files, shop_name):
     income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
     if not income_master.empty: income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
 
+    # Order Processing
     for f in order_files:
         if any(x in f['name'].lower() for x in ['xls', 'csv']):
             try:
@@ -240,13 +209,18 @@ def process_shopee(order_files, income_files, shop_name):
                 if 'เวลาการชำระสินค้า' in df.columns:
                     df = df.dropna(subset=['เวลาการชำระสินค้า'])
                     df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
+                    
+                    # Mapping Columns (Updated: Product Name from 'ชื่อสินค้า')
                     cols = {'หมายเลขคำสั่งซื้อ':'order_id', 'สถานะการสั่งซื้อ':'status', 'เวลาการชำระสินค้า':'shipped_date',
                             'เลขอ้างอิง SKU (SKU Reference No.)':'sku', 'จำนวน':'quantity', 'ราคาขายสุทธิ':'sales_amount',
-                            '*หมายเลขติดตามพัสดุ':'tracking_id', 'วันที่ทำการสั่งซื้อ':'created_date'}
+                            '*หมายเลขติดตามพัสดุ':'tracking_id', 'วันที่ทำการสั่งซื้อ':'created_date', 
+                            'ชื่อสินค้า': 'product_name'}
+                    
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'SHOPEE'
                     df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
 
@@ -257,6 +231,8 @@ def process_shopee(order_files, income_files, shop_name):
 def process_lazada(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
+    
+    # Income Processing
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -279,6 +255,7 @@ def process_lazada(order_files, income_files, shop_name):
         ).reset_index()
         income_master['affiliate'] = 0
 
+    # Order Processing
     for f in order_files:
         if 'xlsx' in f['name']:
             try:
@@ -287,12 +264,17 @@ def process_lazada(order_files, income_files, shop_name):
                 if 'trackingCode' in df.columns:
                     df = df.dropna(subset=['trackingCode'])
                     df = df[df['trackingCode'].astype(str).str.strip() != '']
+                    
+                    # Mapping Columns (Updated: Product Name from 'itemName')
                     cols = {'orderNumber':'order_id', 'status':'status', 'sellerSku':'sku', 'unitPrice':'sales_amount',
-                            'trackingCode':'tracking_id', 'createTime':'created_date', 'deliveredDate':'shipped_date'}
+                            'trackingCode':'tracking_id', 'createTime':'created_date', 'deliveredDate':'shipped_date',
+                            'itemName': 'product_name'}
+                    
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['quantity'] = 1; df['shop_name'] = shop_name; df['platform'] = 'LAZADA'
                     df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
 
@@ -307,18 +289,16 @@ with st.sidebar:
     st.header("🔄 ระบบดึงข้อมูล")
     st.caption("Google Drive > Database")
     
-    # --- ✅ เพิ่มปุ่ม Link ไปยัง Google Drive ตรงนี้ครับ ---
     st.link_button(
         "📂 ไปยังไดร์ฟข้อมูล", 
         "https://drive.google.com/drive/folders/1DJp8gpZ8lntH88hXqYuZOwIyFv3NY4Ot", 
         use_container_width=True
     )
     
-    st.markdown("---") # เส้นขีดคั่นเพื่อความสวยงาม
+    st.markdown("---")
     
     with st.expander("🛠️ เครื่องมือ Sync", expanded=True):
         start_sync = st.button("🚀 Sync Data (ล้างเก่าลงใหม่)", type="primary", use_container_width=True)
-        debug_mode = st.checkbox("โหมดตรวจสอบ (Debug)")
         
         if start_sync:
             status_box = st.empty()
@@ -355,7 +335,7 @@ with st.sidebar:
                         if c in master_df.columns: master_df[c] = pd.to_numeric(master_df[c], errors='coerce').fillna(0)
                         else: master_df[c] = 0.0
 
-                    # Pro-rate
+                    # Pro-rate Logic (เพื่อเก็บข้อมูลละเอียดลง DB)
                     totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
                     ratio = master_df['sales_amount'] / totals.replace(0, 1)
                     master_df['settlement_amount'] *= ratio; master_df['fees'] *= ratio; master_df['affiliate'] *= ratio
@@ -373,6 +353,9 @@ with st.sidebar:
                     master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
                     master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
                     master_df['status'] = master_df.apply(get_standard_status, axis=1)
+                    
+                    if 'product_name' not in master_df.columns: master_df['product_name'] = "-"
+                    master_df['product_name'] = master_df['product_name'].fillna("-")
 
                     # Date String
                     for c in ['created_date', 'shipped_date', 'settlement_date']:
@@ -380,7 +363,7 @@ with st.sidebar:
                     
                     # Upload
                     status_box.text("☁️ อัปโหลดขึ้น Database...")
-                    cols = ['order_id', 'status', 'sku', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
+                    cols = ['order_id', 'status', 'sku', 'product_name', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
                     master_df = master_df[[c for c in cols if c in master_df.columns]]
                     
                     try: supabase.table("orders").delete().neq("id", 0).execute()
@@ -408,7 +391,7 @@ with st.sidebar:
 thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
 today = datetime.datetime.now().date()
 
-tab_dash, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
+tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📦 รายละเอียดออเดอร์ (แยกแพลตฟอร์ม)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
 # --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
@@ -723,6 +706,189 @@ with tab_dash:
             
         else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
     except Exception as e: st.error(f"Error Processing: {e}")
+
+# --- TAB 2: DETAILED ORDER (NEW!!) ---
+with tab_details:
+    st.header("📦 รายละเอียดออเดอร์แยกรายสินค้า")
+    
+    # Platform Selector
+    sub_plat_list = ["TIKTOK", "SHOPEE", "LAZADA"]
+    selected_platform = st.radio("เลือกแพลตฟอร์ม", sub_plat_list, horizontal=True)
+    
+    st.markdown("---")
+    
+    # Filter Date (Sync with global or separate)
+    col_d1, col_d2 = st.columns(2)
+    with col_d1: d_start_det = st.date_input("เริ่มวันที่", st.session_state.d_start, key="det_start")
+    with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
+
+    # Fetch Data
+    try:
+        res = supabase.table("orders").select("*").execute()
+        raw_df = pd.DataFrame(res.data)
+        
+        if not raw_df.empty:
+            # Filter
+            raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
+            mask = (raw_df['created_date'] >= d_start_det) & \
+                   (raw_df['created_date'] <= d_end_det) & \
+                   (raw_df['platform'] == selected_platform)
+            df = raw_df.loc[mask].copy()
+            
+            if df.empty:
+                st.info(f"ไม่พบข้อมูล {selected_platform} ในช่วงวันที่เลือก")
+            else:
+                # Prepare Data for Display
+                for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount', 'unit_cost']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                
+                # Group by Order ID to prepare merge logic
+                # Sort by Date then Order ID
+                df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
+                
+                # HTML Generation
+                h_blue = "#1e3c72"
+                h_cyan = "#22b8e6"
+                h_green = "#27ae60"
+                
+                html = f"""
+                <table style="width:100%; border-collapse: collapse; font-size: 13px; color: white;">
+                    <thead>
+                        <tr>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">วันที่ทำการสั่งซื้อ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">เลขคำสั่งซื้อ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ชื่อสินค้า</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">รหัสสินค้า</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ยอดขาย</th>
+                            <th style="background-color: {h_cyan}; padding: 8px; border: 1px solid #444;">ทุน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ทุน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าธรรมเนียม</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าธรรมเนียม</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าแอฟฟิลิเอต</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าแอฟฟิลิเอต</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าดำเนินการ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าดำเนินการ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">วันที่ได้รับเงิน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ยอดเงินที่ได้รับจริง</th>
+                            <th style="background-color: {h_green}; padding: 8px; border: 1px solid #444;">กำไรสุทธิ</th>
+                            <th style="background-color: {h_green}; padding: 8px; border: 1px solid #444;">%กำไรสุทธิ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+                
+                grouped = df.groupby('order_id', sort=False)
+                row_counter = 0
+                
+                def fmt_num(val, color_neg=True):
+                    s = f"{val:,.2f}"
+                    if color_neg and val < 0: return f'<span class="text-red">{s}</span>'
+                    return s
+                
+                def fmt_pct(num, div):
+                    if div == 0: return "0.0%"
+                    val = (num/div) * 100
+                    return f"{val:,.1f}%"
+
+                # Totals for Footer
+                sum_sales = 0
+                sum_net_profit = 0
+
+                for order_id, group in grouped:
+                    row_counter += 1
+                    bg_color = "#1c1c1c" if row_counter % 2 != 0 else "#262626"
+                    hover_color = "#333333"
+                    
+                    # Order Level Calculations
+                    order_sales = group['sales_amount'].sum()
+                    order_fees = group['fees'].sum()
+                    order_aff = group['affiliate'].sum()
+                    order_settle = group['settlement_amount'].sum()
+                    order_cost_total = group['total_cost'].sum() # Sum of line items
+                    
+                    # Ops Cost Logic (10 baht per order)
+                    ops_cost = 10.0
+                    
+                    # Net Profit Recalculation: Sales - Cost - Fees - Aff - Ops
+                    order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
+                    
+                    # Accumulate Totals
+                    sum_sales += order_sales
+                    sum_net_profit += order_net_profit
+
+                    # Common Data
+                    created_date_str = format_thai_date(group.iloc[0]['created_date'])
+                    settle_date_str = format_thai_date(group.iloc[0]['settlement_date']) if group.iloc[0]['settlement_date'] else "-"
+                    
+                    num_items = len(group)
+                    
+                    # Loop Items
+                    for i, (idx, row) in enumerate(group.iterrows()):
+                        html += f'<tr style="background-color: {bg_color};" onmouseover="this.style.backgroundColor=\'{hover_color}\'" onmouseout="this.style.backgroundColor=\'{bg_color}\'">'
+                        
+                        # --- Merged Columns (First item only) ---
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{created_date_str}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{order_id}</td>'
+                        
+                        # --- Individual Columns (Product Info) ---
+                        prod_name = row.get('product_name', '-')
+                        sku = row.get('sku', '-')
+                        unit_cost = row.get('unit_cost', 0)
+                        
+                        # คำนวณ %Cost รายตัว: (Cost / Sales) 
+                        # เนื่องจาก Sales ถูก Merge เป็นยอดรวมออเดอร์ เพื่อให้เห็น Margin ของสินค้าตัวนั้นเทียบกับยอดขายเฉลี่ย หรือ ยอดขายรวม
+                        # แต่เพื่อความถูกต้องทางบัญชี: %Cost = Item Cost / Item Sales
+                        # เรามี row['sales_amount'] ที่ pro-rate มาแล้ว ใช้ตัวนั้นคำนวณ % ได้เลย แม้หน้าเว็บจะโชว์ Sales รวม
+                        item_sales = row.get('sales_amount', 0)
+                        pct_cost = fmt_pct(unit_cost, item_sales)
+                        
+                        html += f'<td style="border:1px solid #333; padding:5px;">{prod_name}</td>'
+                        html += f'<td style="border:1px solid #333; text-align:center;">{sku}</td>'
+                        
+                        # --- Merged Financials (First item only) ---
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_sales)}</td>'
+                        
+                        # --- Individual Cost ---
+                        html += f'<td style="border:1px solid #333; text-align:right;">{fmt_num(unit_cost)}</td>'
+                        html += f'<td style="border:1px solid #333; text-align:center;">{pct_cost}</td>'
+                        
+                        # --- Merged Remaining Financials ---
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_fees)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_fees, order_sales)}</td>'
+                            
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_aff)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_aff, order_sales)}</td>'
+                            
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(ops_cost)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(ops_cost, order_sales)}</td>'
+                            
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{settle_date_str}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_settle)}</td>'
+                            
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right; font-weight:bold;">{fmt_num(order_net_profit)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_net_profit, order_sales)}</td>'
+                        
+                        html += "</tr>"
+
+                # Total Row
+                html += f"""
+                <tr style="background-color: #010538; font-weight: bold;">
+                    <td colspan="4" style="text-align: center; padding: 10px; border-top: 2px solid #555;">รวมทั้งหมด</td>
+                    <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_sales)}</td>
+                    <td colspan="10" style="border-top: 2px solid #555;"></td>
+                    <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_net_profit)}</td>
+                    <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_net_profit, sum_sales)}</td>
+                </tr>
+                """
+                
+                html += "</tbody></table>"
+                
+                st.markdown(f'<div class="custom-table-wrapper">{html}</div>', unsafe_allow_html=True)
+
+    except Exception as e: st.error(f"Error Details: {e}")
 
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
