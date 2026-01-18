@@ -410,13 +410,11 @@ today = datetime.datetime.now().date()
 
 tab_dash, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
-# --- TAB 1: DASHBOARD (แสดงผลอย่างเดียว ไม่มีการกรอกข้อมูล) ---
+# --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # ==========================================
-    # 1. FILTERS (ส่วนกรองวันที่ - คงเดิม)
-    # ==========================================
+    # 1. Filters (คงเดิม)
     col_filters = st.columns([1, 1, 1, 1])
     
     if "d_start" not in st.session_state:
@@ -449,22 +447,18 @@ with tab_dash:
         if shopee_check: sel_plats.append('SHOPEE')
         if lazada_check: sel_plats.append('LAZADA')
 
-    # ==========================================
-    # 2. DATA PROCESSING (ดึงข้อมูลและคำนวณ)
-    # ==========================================
+    # Data Processing
     try:
         # A. ดึงข้อมูลออเดอร์ (Orders)
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
         
-        # B. ดึงข้อมูลค่าโฆษณา (ADS) จาก Database (ดึงมาใช้อย่างเดียว ไม่ต้องให้แก้)
+        # B. ดึงข้อมูลค่าโฆษณา (ADS) จาก Database
         ads_db = pd.DataFrame()
         try:
             ads_res = supabase.table("daily_ads").select("*").gte("date", str(st.session_state.d_start)).lte("date", str(st.session_state.d_end)).execute()
             ads_temp = pd.DataFrame(ads_res.data)
             if not ads_temp.empty:
-                # เปลี่ยนชื่อ Column ให้ตรงกับ Logic คำนวณเดิม
-                # Database: date, ads_amount, roas_ads -> Logic: created_date, manual_ads, manual_roas
                 ads_db = ads_temp.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
                 ads_db['created_date'] = pd.to_datetime(ads_db['created_date']).dt.date
                 ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
@@ -482,11 +476,9 @@ with tab_dash:
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-            # สร้างโครงวันที่ให้ครบ (Master Date)
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
             
-            # รวมยอดขายรายวัน
             daily = df.groupby('created_date').agg(
                 success_count=('status', lambda x: (x == 'ออเดอร์สำเร็จ').sum()),
                 pending_count=('status', lambda x: (x == 'รอดำเนินการ').sum()),
@@ -498,10 +490,8 @@ with tab_dash:
                 affiliate_sum=('affiliate', 'sum')
             ).reset_index()
             
-            # Merge 1: เอาวันที่ตั้ง แล้วแปะยอดขาย
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
-            # Merge 2: เอาข้อมูล ADS มาแปะ (Left Join)
             if not ads_db.empty:
                 final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
             else:
@@ -509,7 +499,7 @@ with tab_dash:
                 final_df['manual_ads'] = 0
                 final_df['manual_roas'] = 0
 
-            # D. คำนวณกำไรสุทธิ (Calculation Logic)
+            # D. คำนวณ (Calculation Logic)
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             
@@ -524,106 +514,183 @@ with tab_dash:
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # ==========================================
-            # 3. HTML GENERATION (แสดงตาราง)
+            # 3. HTML GENERATION (STYLING UPDATE)
             # ==========================================
+            
+            # CSS สำหรับ Dark Mode Table
             st.markdown("""
             <style>
-                table.report-table th { color: #000 !important; font-weight: 600; border-color: #bbb !important; }
+                table.report-table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    color: #ffffff; /* Default text white */
+                }
+                table.report-table th { 
+                    color: #ffffff !important; 
+                    font-weight: bold !important; 
+                    border: 1px solid #444 !important; 
+                    padding: 8px;
+                }
+                table.report-table td {
+                    border: 1px solid #333;
+                    padding: 6px;
+                }
+                /* Dark Mode Rows */
+                table.report-table tbody tr:nth-of-type(odd) { background-color: #1c1c1c; }
+                table.report-table tbody tr:nth-of-type(even) { background-color: #262626; }
+                table.report-table tbody tr:hover { background-color: #333333 !important; }
+                
+                /* Footer Row */
+                .total-row { 
+                    background-color: #010538 !important; 
+                    font-weight: bold; 
+                    color: #ffffff;
+                }
+                
+                /* Utils */
+                .text-red { color: #fa0000 !important; font-weight: bold; }
             </style>
             """, unsafe_allow_html=True)
 
+            # กำหนดสี Header ตามโจทย์
+            h_blue   = "#1e3c72"
+            h_cyan   = "#22b8e6"
+            h_orange = "#e67e22"
+            h_green  = "#27ae60"
+
             html_parts = []
-            html_parts.append("""
+            html_parts.append(f"""
             <div class="custom-table-wrapper">
             <table class="report-table">
                 <thead>
                     <tr>
-                        <th style="background-color: #C5CED9; min-width: 85px;">วันที่</th>
-                        <th style="background-color: #CAC8C8;">จำนวนออเดอร์</th>
-                        <th style="background-color: #CAC8C8;">ออเดอร์สำเร็จ</th>
-                        <th style="background-color: #CAC8C8;">รอดำเนินการ</th>
-                        <th style="background-color: #CAC8C8;">ตีกลับ</th>
-                        <th style="background-color: #CAC8C8;">ยกเลิก</th>
-                        <th style="background-color: #DDEBF7;">ยอดขายรวม</th>
-                        <th style="background-color: #DDEBF7;">ROAS</th>
-                        <th style="background-color: #DDEBF7;">ROAS ADS</th>
-                        <th style="background-color: #E2EFDA;">ทุนรวม</th>
-                        <th style="background-color: #E2EFDA;">%ทุนรวม</th>
-                        <th style="background-color: #FFF2CC;">ค่าธรรมเนียม</th>
-                        <th style="background-color: #FFF2CC;">%ค่าธรรมเนียม</th>
-                        <th style="background-color: #F8CBAD;">ค่าแอฟฟิลิเอต</th>
-                        <th style="background-color: #F8CBAD;">%ค่าแอฟฟิลิเอต</th>
-                        <th style="background-color: #FCE4D6;">กำไร</th>
-                        <th style="background-color: #FCE4D6;">%กำไร</th>
-                        <th style="background-color: #B4C6E7;">ค่าADS</th>
-                        <th style="background-color: #B4C6E7;">ADS VAT 7%</th>
-                        <th style="background-color: #C6E0B4;">ค่าแอดรวม</th>
-                        <th style="background-color: #C6E0B4;">%ค่าแอด</th>
-                        <th style="background-color: #D0CECE;">ค่าดำเนินการ</th>
-                        <th style="background-color: #D0CECE;">%ค่าดำเนินการ</th>
-                        <th style="background-color: #F4B084; min-width: 120px;">กำไรสุทธิ</th>
-                        <th style="background-color: #F4B084;">%กำไรสุทธิ</th>
+                        <th style="background-color: {h_blue}; min-width: 85px;">วันที่</th>
+                        <th style="background-color: {h_blue};">จำนวนออเดอร์</th>
+                        <th style="background-color: {h_blue};">ออเดอร์สำเร็จ</th>
+                        <th style="background-color: {h_blue};">รอดำเนินการ</th>
+                        <th style="background-color: {h_blue};">ตีกลับ</th>
+                        <th style="background-color: {h_blue};">ยกเลิก</th>
+                        <th style="background-color: {h_blue};">ยอดขายรวม</th>
+                        <th style="background-color: {h_cyan};">ROAS</th>
+                        <th style="background-color: {h_cyan};">ROAS ADS</th>
+                        <th style="background-color: {h_blue};">ทุนรวม</th>
+                        <th style="background-color: {h_blue};">%ทุนรวม</th>
+                        <th style="background-color: {h_blue};">ค่าธรรมเนียม</th>
+                        <th style="background-color: {h_blue};">%ค่าธรรมเนียม</th>
+                        <th style="background-color: {h_blue};">ค่าแอฟฟิลิเอต</th>
+                        <th style="background-color: {h_blue};">%ค่าแอฟฟิลิเอต</th>
+                        <th style="background-color: {h_blue};">กำไร</th>
+                        <th style="background-color: {h_blue};">%กำไร</th>
+                        <th style="background-color: {h_orange};">ค่าADS</th>
+                        <th style="background-color: {h_orange};">ADS VAT 7%</th>
+                        <th style="background-color: {h_orange};">ค่าแอดรวม</th>
+                        <th style="background-color: {h_blue};">%ค่าแอด</th>
+                        <th style="background-color: {h_blue};">ค่าดำเนินการ</th>
+                        <th style="background-color: {h_blue};">%ค่าดำเนินการ</th>
+                        <th style="background-color: {h_green}; min-width: 120px;">กำไรสุทธิ</th>
+                        <th style="background-color: {h_blue};">%กำไรสุทธิ</th>
                     </tr>
                 </thead>
                 <tbody>
             """)
 
-            # สีพื้นหลัง
-            c_date = "#C5CED9"; c_order = "#CAC8C8"; c_sales = "#DDEBF7"; c_cost = "#E2EFDA"
-            c_fee = "#FFF2CC"; c_aff = "#F8CBAD"; c_profit = "#FCE4D6"
-            c_ads = "#B4C6E7"; c_ads_total = "#C6E0B4"; c_ops = "#D0CECE"; c_net = "#F4B084"
+            # Helper จัดสีตัวเลข (แดงเมื่อติดลบ)
+            def fmt_val(val, is_percent=False):
+                s_val = f"{val:,.1f}%" if is_percent else f"{val:,.2f}"
+                if is_percent: # ถ้าเป็น % ไม่ต้องใส่คอมม่าทศนิยมก็ได้ แต่ตามโค้ดเดิม
+                     s_val = f"{val:.1f}%"
+                
+                if val < 0: return f'<span class="text-red">{s_val}</span>'
+                return s_val
 
+            # วนลูปสร้างแถวข้อมูล
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
-                
-                # Logic Bar Width
-                max_profit = calc['กำไรสุทธิ'].max()
-                if max_profit <= 0: max_profit = 1 
-                bar_width = 0
-                if net_profit > 0: bar_width = min((net_profit / max_profit) * 100, 100)
-                
                 date_str = format_thai_date(r['created_date'])
 
                 row_html = f"""
                 <tr>
-                    <td class="txt" style="background-color: {c_date}; text-align: center;">{date_str}</td>
-                    <td class="num font-bold" style="background-color: {c_order}; text-align: center;">{int(r['total_orders'])}</td>
-                    <td class="num" style="background-color: {c_order}; text-align: center;">{int(r['success_count'])}</td>
-                    <td class="num" style="background-color: {c_order}; text-align: center;">{int(r['pending_count'])}</td>
-                    <td class="num" style="background-color: {c_order}; text-align: center;">{int(r['return_count'])}</td>
-                    <td class="num" style="background-color: {c_order}; text-align: center;">{int(r['cancel_count'])}</td>
-                    <td class="num font-bold" style="background-color: {c_sales}; text-align: center;">{sales:,.2f}</td>
-                    <td class="num" style="background-color: {c_sales}; text-align: center;">{r['ROAS']:,.2f}</td>
-                    <td class="num" style="background-color: {c_sales}; text-align: center;">{r['manual_roas']:,.2f}</td>
-                    <td class="num" style="background-color: {c_cost}; text-align: center;">{r['cost_sum']:,.2f}</td>
-                    <td class="num" style="background-color: {c_cost}; text-align: center;">{safe_div(r['cost_sum'], sales):.1f}%</td>
-                    <td class="num" style="background-color: {c_fee}; text-align: center;">{r['fees_sum']:,.2f}</td>
-                    <td class="num" style="background-color: {c_fee}; text-align: center;">{safe_div(r['fees_sum'], sales):.1f}%</td>
-                    <td class="num" style="background-color: {c_aff}; text-align: center;">{r['affiliate_sum']:,.2f}</td>
-                    <td class="num" style="background-color: {c_aff}; text-align: center;">{safe_div(r['affiliate_sum'], sales):.1f}%</td>
-                    <td class="num font-bold text-green" style="background-color: {c_profit}; text-align: center;">{r['กำไร']:,.2f}</td>
-                    <td class="num" style="background-color: {c_profit}; text-align: center;">{safe_div(r['กำไร'], sales):.1f}%</td>
-                    <td class="num" style="background-color: {c_ads}; text-align: center;">{r['manual_ads']:,.2f}</td>
-                    <td class="num" style="background-color: {c_ads}; text-align: center;">{r['ADS VAT 7%']:,.2f}</td>
-                    <td class="num text-red" style="background-color: {c_ads_total}; text-align: center;">{r['ค่าแอดรวม']:,.2f}</td>
-                    <td class="num" style="background-color: {c_ads_total}; text-align: center;">{safe_div(r['ค่าแอดรวม'], sales):.1f}%</td>
-                    <td class="num" style="background-color: {c_ops}; text-align: center;">{r['ค่าดำเนินการ']:,.0f}</td>
-                    <td class="num" style="background-color: {c_ops}; text-align: center;">{safe_div(r['ค่าดำเนินการ'], sales):.1f}%</td>
-                    <td class="num font-bold text-teal" style="background-color: {c_net}; position: relative; text-align: center;">
-                        <span style="position: relative; z-index: 2;">{net_profit:,.2f}</span>
-                        {'<div class="p-bg" style="margin-top: 5px;"><div class="p-fill" style="width: ' + str(bar_width) + '%;"></div></div>' if bar_width > 0 else ''}
-                    </td>
-                    <td class="num" style="background-color: {c_net}; text-align: center;">{safe_div(net_profit, sales):.1f}%</td>
+                    <td class="txt">{date_str}</td>
+                    <td class="num">{int(r['total_orders'])}</td>
+                    <td class="num">{int(r['success_count'])}</td>
+                    <td class="num">{int(r['pending_count'])}</td>
+                    <td class="num">{int(r['return_count'])}</td>
+                    <td class="num">{int(r['cancel_count'])}</td>
+                    <td class="num">{fmt_val(sales)}</td>
+                    <td class="num">{fmt_val(r['ROAS'])}</td>
+                    <td class="num">{fmt_val(r['manual_roas'])}</td>
+                    <td class="num">{fmt_val(r['cost_sum'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['cost_sum'], sales), True)}</td>
+                    <td class="num">{fmt_val(r['fees_sum'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['fees_sum'], sales), True)}</td>
+                    <td class="num">{fmt_val(r['affiliate_sum'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['affiliate_sum'], sales), True)}</td>
+                    <td class="num">{fmt_val(r['กำไร'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['กำไร'], sales), True)}</td>
+                    <td class="num">{fmt_val(r['manual_ads'])}</td>
+                    <td class="num">{fmt_val(r['ADS VAT 7%'])}</td>
+                    <td class="num">{fmt_val(r['ค่าแอดรวม'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['ค่าแอดรวม'], sales), True)}</td>
+                    <td class="num">{fmt_val(r['ค่าดำเนินการ'])}</td>
+                    <td class="num">{fmt_val(safe_div(r['ค่าดำเนินการ'], sales), True)}</td>
+                    <td class="num font-bold">{fmt_val(net_profit)}</td>
+                    <td class="num">{fmt_val(safe_div(net_profit, sales), True)}</td>
                 </tr>"""
                 html_parts.append(row_html.replace('\n', ''))
+
+            # --- คำนวณแถวสรุป (Total Row) ---
+            sum_sales = calc['sales_sum'].sum()
+            sum_cost = calc['cost_sum'].sum()
+            sum_fee = calc['fees_sum'].sum()
+            sum_aff = calc['affiliate_sum'].sum()
+            sum_profit_gross = calc['กำไร'].sum()
+            sum_ads = calc['manual_ads'].sum()
+            sum_ads_vat = calc['ADS VAT 7%'].sum()
+            sum_ads_total = calc['ค่าแอดรวม'].sum()
+            sum_ops = calc['ค่าดำเนินการ'].sum()
+            sum_net_profit = calc['กำไรสุทธิ'].sum()
+            
+            # คำนวณ % ภาพรวม
+            total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
+            
+            total_html = f"""
+            <tr class="total-row">
+                <td class="txt">รวม</td>
+                <td class="num">{int(calc['total_orders'].sum())}</td>
+                <td class="num">{int(calc['success_count'].sum())}</td>
+                <td class="num">{int(calc['pending_count'].sum())}</td>
+                <td class="num">{int(calc['return_count'].sum())}</td>
+                <td class="num">{int(calc['cancel_count'].sum())}</td>
+                <td class="num">{fmt_val(sum_sales)}</td>
+                <td class="num">{fmt_val(total_roas)}</td>
+                <td class="num">-</td>
+                <td class="num">{fmt_val(sum_cost)}</td>
+                <td class="num">{fmt_val(safe_div(sum_cost, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_fee)}</td>
+                <td class="num">{fmt_val(safe_div(sum_fee, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_aff)}</td>
+                <td class="num">{fmt_val(safe_div(sum_aff, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_profit_gross)}</td>
+                <td class="num">{fmt_val(safe_div(sum_profit_gross, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_ads)}</td>
+                <td class="num">{fmt_val(sum_ads_vat)}</td>
+                <td class="num">{fmt_val(sum_ads_total)}</td>
+                <td class="num">{fmt_val(safe_div(sum_ads_total, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_ops)}</td>
+                <td class="num">{fmt_val(safe_div(sum_ops, sum_sales), True)}</td>
+                <td class="num">{fmt_val(sum_net_profit)}</td>
+                <td class="num">{fmt_val(safe_div(sum_net_profit, sum_sales), True)}</td>
+            </tr>
+            """
+            html_parts.append(total_html.replace('\n', ''))
 
             html_parts.append("</tbody></table></div>")
             st.markdown("".join(html_parts), unsafe_allow_html=True)
             
         else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
     except Exception as e: st.error(f"Error Processing: {e}")
-
+    
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
     
