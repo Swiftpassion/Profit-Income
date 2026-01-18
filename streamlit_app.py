@@ -18,14 +18,62 @@ st.set_page_config(page_title="Dashboard สรุปยอดขาย", layout
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
+    
     html, body, [class*="css"] { font-family: 'Kanit', sans-serif; }
+
+    /* Container */
+    .custom-table-wrapper {
+        overflow-x: auto;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-top: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        background-color: #1c1c1c; 
+    }
     
     /* Table Styling General */
-    .custom-table-wrapper { overflow-x: auto; background-color: #1c1c1c; border-radius: 8px; padding: 10px; }
+    table.report-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1500px; 
+        font-size: 13px;
+    }
     
-    /* Helper Classes */
-    .text-red { color: #fa0000 !important; font-weight: bold; }
+    /* Header */
+    table.report-table th {
+        background-color: #2c3e50;
+        color: white;
+        padding: 8px 5px;
+        text-align: center;
+        border: 1px solid #34495e;
+        position: sticky; top: 0; z-index: 100;
+        white-space: nowrap;
+    }
+    
+    /* Cells */
+    table.report-table td {
+        padding: 4px 6px;
+        border: 1px solid #e0e0e0;
+        color: #333;
+        vertical-align: middle;
+        height: 35px;
+    }
+
+    table.report-table tr:nth-child(even) { background-color: #f9f9f9; }
+    table.report-table tr:hover { background-color: #f0f8ff; }
+
+    .num { text-align: right; font-family: 'Courier New', monospace; font-weight: 600; }
+    .txt { text-align: center; white-space: nowrap; }
+    
+    /* Helper Colors */
     .text-green { color: #27ae60; }
+    .text-red { color: #fa0000; font-weight: bold; }
+    .font-bold { font-weight: bold; }
+    
+    /* Progress Bar */
+    .bar-container { position: absolute; bottom: 0; left: 0; height: 4px; background-color: #27ae60; opacity: 0.7; z-index: 1; }
+    .cell-content { position: relative; z-index: 2; }
+    td.relative-cell { position: relative; padding-bottom: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -65,7 +113,11 @@ def download_file(file_id):
     return fh
 
 def clean_date(df, col_name):
+    """แปลงวันที่ ตัดเวลาทิ้ง และจัดการ Format ให้เป็น Date Object"""
     if col_name in df.columns:
+        df[col_name] = df[col_name].astype(str).str.strip()
+        df[col_name] = df[col_name].replace({'nan': None, 'None': None, '': None})
+        # dayfirst=True ช่วยให้ 27/12/2025 ถูกอ่านถูกต้อง
         df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True).dt.date
     return df
 
@@ -92,7 +144,6 @@ def get_standard_status(row):
 
 def format_thai_date(d_obj):
     if pd.isnull(d_obj): return "-"
-    # แปลง string เป็น date object ถ้าจำเป็น
     if isinstance(d_obj, str):
         try: d_obj = datetime.datetime.strptime(d_obj, "%Y-%m-%d").date()
         except: return d_obj
@@ -111,13 +162,12 @@ def load_cost_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 3. PROCESSORS ---
-
+# --- 3. PROCESSORS (XLSX ONLY + Clean Date + Keep Pending) ---
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income (คงเดิม)
+    # 1. Income (XLSX Only)
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -131,31 +181,20 @@ def process_tiktok(order_files, income_files, shop_name):
             except: pass
     income_master = pd.concat(income_dfs, ignore_index=True).groupby('order_id').first().reset_index() if income_dfs else pd.DataFrame()
 
-    # 2. Orders (ปรับปรุงเรื่องวันที่)
+    # 2. Orders (XLSX Only)
     for f in order_files:
-        if any(ext in f['name'].lower() for ext in ['xlsx', 'xls', 'csv']):
+        if 'xlsx' in f['name']: # เช็คแค่ xlsx
             try:
                 data = download_file(f['id'])
-                df = pd.DataFrame()
+                df = pd.read_excel(data, dtype=str)
                 
-                if 'csv' in f['name'].lower():
-                    for enc in ['utf-8', 'cp874', 'utf-8-sig', 'latin1']:
-                        try:
-                            data.seek(0)
-                            df = pd.read_csv(data, dtype=str, encoding=enc)
-                            if not df.empty and 'Order ID' in df.columns: break
-                        except: continue
-                else:
-                    df = pd.read_excel(data, dtype=str)
-
                 if df.empty: continue
                 df.columns = df.columns.str.strip()
 
-                # Tiktok: Shipped Time (AC), Created Time (Z)
-                if 'Shipped Time' in df.columns:
-                    df['Shipped Time'] = df['Shipped Time'].astype(str)
-                    df = df.dropna(subset=['Shipped Time'])
-                    df = df[df['Shipped Time'].str.strip() != '']
+                # Tiktok: Created Time (Z), Shipped Time (AC)
+                if 'Order ID' in df.columns:
+                    # ✅ ไม่ลบออเดอร์ด้วย Shipped Time (เพื่อให้เห็นออเดอร์ใหม่)
+                    df = df.dropna(subset=['Order ID'])
                     
                     prod_col = 'Product Name' if 'Product Name' in df.columns else df.columns[7]
 
@@ -166,7 +205,7 @@ def process_tiktok(order_files, income_files, shop_name):
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'TIKTOK'
                     
-                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (27/12/2025 12:32:17 -> 2025-12-27)
+                    # ✅ Clean Date (ตัดเวลาทิ้ง)
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
                     
@@ -183,15 +222,13 @@ def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income (คงเดิม)
+    # 1. Income (XLSX/XLS Only)
     for f in income_files:
-        if any(x in f['name'].lower() for x in ['xls', 'csv']):
+        if any(x in f['name'].lower() for x in ['xls', 'xlsx']):
             try:
                 data = download_file(f['id'])
-                if 'csv' in f['name'].lower():
-                    try: df = pd.read_csv(data, dtype=str, encoding='utf-8')
-                    except: data.seek(0); df = pd.read_csv(data, dtype=str, encoding='cp874')
-                else: df = pd.read_excel(data, sheet_name='Income', header=5, dtype=str)
+                # Shopee บางทีเป็น XLS เก่า
+                df = pd.read_excel(data, sheet_name='Income', header=5, dtype=str)
                 df.columns = df.columns.str.strip()
                 rename = {'หมายเลขคำสั่งซื้อ':'order_id', 'วันที่โอนชำระเงินสำเร็จ':'settlement_date', 'สินค้าราคาปกติ':'op', 'ค่าคอมมิชชั่น':'aff', 'จำนวนเงินทั้งหมดที่โอนแล้ว (฿)':'settlement_amount'}
                 df = df[[c for c in rename if c in df.columns]].rename(columns=rename)
@@ -203,32 +240,20 @@ def process_shopee(order_files, income_files, shop_name):
     income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
     if not income_master.empty: income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
 
-    # 2. Orders (ปรับปรุงเรื่องวันที่)
+    # 2. Orders (XLSX/XLS Only)
     for f in order_files:
-        if any(x in f['name'].lower() for x in ['xls', 'csv']):
+        if any(x in f['name'].lower() for x in ['xls', 'xlsx']):
             try:
                 data = download_file(f['id'])
-                df = pd.DataFrame()
-                if 'csv' in f['name'].lower():
-                    for enc in ['utf-8', 'cp874', 'utf-8-sig']:
-                        try:
-                            data.seek(0); temp = pd.read_csv(data, encoding=enc, dtype=str)
-                            header = -1
-                            if 'หมายเลขคำสั่งซื้อ' in temp.columns: header = 0
-                            else:
-                                for i, r in temp.head(20).iterrows():
-                                    if any('หมายเลขคำสั่งซื้อ' in str(v) for v in r.values): header = i+1; break
-                            if header != -1: data.seek(0); df = pd.read_csv(data, encoding=enc, dtype=str, skiprows=header); break
-                        except: continue
-                else: df = pd.read_excel(data, dtype=str)
+                df = pd.read_excel(data, dtype=str)
                 
                 if df.empty: continue
                 df.columns = df.columns.str.strip()
                 
-                # Shopee: เวลาการชำระสินค้า (H), วันที่ทำการสั่งซื้อ (G)
-                if 'เวลาการชำระสินค้า' in df.columns:
-                    df = df.dropna(subset=['เวลาการชำระสินค้า'])
-                    df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
+                # Shopee: วันที่ทำการสั่งซื้อ (G), เวลาการชำระสินค้า (H)
+                if 'หมายเลขคำสั่งซื้อ' in df.columns:
+                    # ✅ ไม่ลบออเดอร์ด้วย เวลาชำระสินค้า
+                    df = df.dropna(subset=['หมายเลขคำสั่งซื้อ'])
                     
                     cols = {'หมายเลขคำสั่งซื้อ':'order_id', 'สถานะการสั่งซื้อ':'status', 'เวลาการชำระสินค้า':'shipped_date',
                             'เลขอ้างอิง SKU (SKU Reference No.)':'sku', 'จำนวน':'quantity', 'ราคาขายสุทธิ':'sales_amount',
@@ -238,7 +263,7 @@ def process_shopee(order_files, income_files, shop_name):
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'SHOPEE'
                     
-                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (2025-12-26 00:01 -> 2025-12-26)
+                    # ✅ Clean Date (ตัดเวลาทิ้ง)
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
                     
@@ -255,7 +280,7 @@ def process_lazada(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income (คงเดิม)
+    # 1. Income (XLSX Only)
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -278,15 +303,14 @@ def process_lazada(order_files, income_files, shop_name):
         ).reset_index()
         income_master['affiliate'] = 0
 
-    # 2. Orders (ปรับปรุงเรื่องวันที่)
+    # 2. Orders (XLSX Only)
     for f in order_files:
         if 'xlsx' in f['name']:
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
-                if 'trackingCode' in df.columns:
-                    df = df.dropna(subset=['trackingCode'])
-                    df = df[df['trackingCode'].astype(str).str.strip() != '']
+                if 'orderNumber' in df.columns:
+                    df = df.dropna(subset=['orderNumber'])
                     
                     # Lazada: createTime (I), deliveredDate (P)
                     cols = {'orderNumber':'order_id', 'status':'status', 'sellerSku':'sku', 'unitPrice':'sales_amount',
@@ -296,7 +320,7 @@ def process_lazada(order_files, income_files, shop_name):
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['quantity'] = 1; df['shop_name'] = shop_name; df['platform'] = 'LAZADA'
                     
-                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (28 Dec 2025 13:38 -> 2025-12-28)
+                    # ✅ Clean Date
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
                     
@@ -362,7 +386,7 @@ with st.sidebar:
                         if c in master_df.columns: master_df[c] = pd.to_numeric(master_df[c], errors='coerce').fillna(0)
                         else: master_df[c] = 0.0
 
-                    # Pro-rate Logic (เพื่อเก็บข้อมูลละเอียดลง DB)
+                    # Pro-rate
                     totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
                     ratio = master_df['sales_amount'] / totals.replace(0, 1)
                     master_df['settlement_amount'] *= ratio; master_df['fees'] *= ratio; master_df['affiliate'] *= ratio
@@ -380,7 +404,7 @@ with st.sidebar:
                     master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
                     master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
                     master_df['status'] = master_df.apply(get_standard_status, axis=1)
-                    
+
                     if 'product_name' not in master_df.columns: master_df['product_name'] = "-"
                     master_df['product_name'] = master_df['product_name'].fillna("-")
 
@@ -418,13 +442,11 @@ with st.sidebar:
 thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
 today = datetime.datetime.now().date()
 
-tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📦 รายละเอียดออเดอร์ (แยกแพลตฟอร์ม)", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
+tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📦 รายละเอียดออเดอร์", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
-# --- TAB 1: DASHBOARD (HTML Table) ---
+# --- TAB 1: DASHBOARD ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
-    
-    # 1. Filters (คงเดิม)
     col_filters = st.columns([1, 1, 1, 1])
     
     if "d_start" not in st.session_state:
@@ -457,13 +479,10 @@ with tab_dash:
         if shopee_check: sel_plats.append('SHOPEE')
         if lazada_check: sel_plats.append('LAZADA')
 
-    # Data Processing
     try:
-        # A. ดึงข้อมูลออเดอร์ (Orders)
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
         
-        # B. ดึงข้อมูลค่าโฆษณา (ADS) จาก Database
         ads_db = pd.DataFrame()
         try:
             ads_res = supabase.table("daily_ads").select("*").gte("date", str(st.session_state.d_start)).lte("date", str(st.session_state.d_end)).execute()
@@ -476,7 +495,6 @@ with tab_dash:
                 ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']]
         except: pass
 
-        # C. ประมวลผลและรวมตาราง
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
             mask = (raw_df['created_date'] >= st.session_state.d_start) & (raw_df['created_date'] <= st.session_state.d_end)
@@ -505,87 +523,31 @@ with tab_dash:
             if not ads_db.empty:
                 final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
             else:
-                final_df = step1.copy()
-                final_df['manual_ads'] = 0
-                final_df['manual_roas'] = 0
+                final_df = step1.copy(); final_df['manual_ads'] = 0; final_df['manual_roas'] = 0
 
-            # D. คำนวณ (Calculation Logic)
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
-            
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
             calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
-            
-            def safe_div(a, b): return (a/b*100) if b > 0 else 0
-            
             calc['ROAS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
             calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # ==========================================
-            # 3. HTML GENERATION (Dark Mode + Center Align + Full Totals)
-            # ==========================================
-            
+            # HTML GENERATION (Compact)
             st.markdown("""
             <style>
                 table.report-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-                
-                /* Header */
-                table.report-table th { 
-                    color: #ffffff !important; 
-                    font-weight: bold !important; 
-                    border: 1px solid #444 !important; 
-                    padding: 8px; 
-                    text-align: center; 
-                }
-                
-                /* Cells */
-                table.report-table td { 
-                    color: #ffffff !important; 
-                    border: 1px solid #333; 
-                    padding: 6px; 
-                    vertical-align: middle; 
-                    text-align: center !important; /* ✅ บังคับจัดกึ่งกลาง */
-                }
-                
-                /* Row Colors */
+                table.report-table th { color: #ffffff !important; font-weight: bold !important; border: 1px solid #444 !important; padding: 8px; text-align: center; }
+                table.report-table td { color: #ffffff !important; border: 1px solid #333; padding: 6px; vertical-align: middle; text-align: center !important; }
                 table.report-table tbody tr:nth-of-type(odd) { background-color: #1c1c1c; }
                 table.report-table tbody tr:nth-of-type(even) { background-color: #262626; }
                 table.report-table tbody tr:hover { background-color: #333333 !important; }
-                
-                /* Total Row */
-                tr.total-row td { 
-                    background-color: #010538 !important; 
-                    color: #ffffff !important; 
-                    font-weight: bold; 
-                    border-top: 2px solid #555; 
-                }
-                
-                /* Utilities */
+                tr.total-row td { background-color: #010538 !important; color: #ffffff !important; font-weight: bold; border-top: 2px solid #555; }
                 .text-red { color: #fa0000 !important; font-weight: bold; }
-                
-                /* Alignments (Override เพื่อความชัวร์) */
-                .num { text-align: center !important; }
-                .txt { text-align: center !important; }
-                
-                /* Progress Bar (ปรับให้เข้ากับ Dark Mode) */
-                .bar-container {
-                    position: absolute;
-                    bottom: 0; left: 0;
-                    height: 4px; 
-                    background-color: #27ae60; 
-                    opacity: 0.7;
-                    z-index: 1;
-                }
-                .cell-content {
-                    position: relative;
-                    z-index: 2; 
-                }
-                td.relative-cell {
-                    position: relative;
-                    padding-bottom: 8px; 
-                }
+                .bar-container { position: absolute; bottom: 0; left: 0; height: 4px; background-color: #27ae60; opacity: 0.7; z-index: 1; }
+                .cell-content { position: relative; z-index: 2; }
+                td.relative-cell { position: relative; padding-bottom: 8px; }
             </style>
             """, unsafe_allow_html=True)
 
@@ -642,12 +604,8 @@ with tab_dash:
                 date_str = format_thai_date(r['created_date'])
 
                 bar_width = 0
-                if net_profit > 0: 
-                    bar_width = min((net_profit / max_profit) * 100, 100)
-                
-                bar_html = ""
-                if bar_width > 0:
-                    bar_html = f'<div class="bar-container" style="width: {bar_width}%;"></div>'
+                if net_profit > 0: bar_width = min((net_profit / max_profit) * 100, 100)
+                bar_html = f'<div class="bar-container" style="width: {bar_width}%;"></div>' if bar_width > 0 else ""
 
                 row_html = f"""
                 <tr>
@@ -682,7 +640,7 @@ with tab_dash:
                 </tr>"""
                 html_parts.append(row_html.replace('\n', ''))
 
-            # --- TOTAL ROW ---
+            # Total Row
             sum_sales = calc['sales_sum'].sum()
             sum_cost = calc['cost_sum'].sum()
             sum_fee = calc['fees_sum'].sum()
@@ -734,29 +692,23 @@ with tab_dash:
         else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
     except Exception as e: st.error(f"Error Processing: {e}")
 
-# --- TAB 2: DETAILED ORDER (NEW!!) ---
+# --- TAB 2: DETAILED ORDER ---
 with tab_details:
     st.header("📦 รายละเอียดออเดอร์แยกรายสินค้า")
-    
-    # Platform Selector
     sub_plat_list = ["TIKTOK", "SHOPEE", "LAZADA"]
     selected_platform = st.radio("เลือกแพลตฟอร์ม", sub_plat_list, horizontal=True)
-    
     st.markdown("---")
     
-    # Filter Date (Sync with global or separate)
     col_d1, col_d2 = st.columns(2)
     with col_d1: d_start_det = st.date_input("เริ่มวันที่", st.session_state.d_start, key="det_start")
     with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
 
-    # Fetch Data
     try:
         res = supabase.table("orders").select("*").execute()
         raw_df = pd.DataFrame(res.data)
         
         if not raw_df.empty:
-            # Filter
-            raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
+            raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
             mask = (raw_df['created_date'] >= d_start_det) & \
                    (raw_df['created_date'] <= d_end_det) & \
                    (raw_df['platform'] == selected_platform)
@@ -765,19 +717,12 @@ with tab_details:
             if df.empty:
                 st.info(f"ไม่พบข้อมูล {selected_platform} ในช่วงวันที่เลือก")
             else:
-                # Prepare Data for Display
                 for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount', 'unit_cost']:
                     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
                 
-                # Group by Order ID to prepare merge logic
-                # Sort by Date then Order ID
                 df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
                 
-                # HTML Generation
-                h_blue = "#1e3c72"
-                h_cyan = "#22b8e6"
-                h_green = "#27ae60"
-                
+                h_blue = "#1e3c72"; h_cyan = "#22b8e6"; h_green = "#27ae60"
                 html = f"""
                 <table style="width:100%; border-collapse: collapse; font-size: 13px; color: white;">
                     <thead>
@@ -803,104 +748,70 @@ with tab_details:
                     </thead>
                     <tbody>
                 """
-                
                 grouped = df.groupby('order_id', sort=False)
                 row_counter = 0
-                
                 def fmt_num(val, color_neg=True):
                     s = f"{val:,.2f}"
                     if color_neg and val < 0: return f'<span class="text-red">{s}</span>'
                     return s
-                
                 def fmt_pct(num, div):
                     if div == 0: return "0.0%"
                     val = (num/div) * 100
                     return f"{val:,.1f}%"
 
-                # Totals for Footer
-                sum_sales = 0
-                sum_net_profit = 0
-
+                sum_sales = 0; sum_net_profit = 0
                 for order_id, group in grouped:
                     row_counter += 1
                     bg_color = "#1c1c1c" if row_counter % 2 != 0 else "#262626"
                     hover_color = "#333333"
                     
-                    # Order Level Calculations
                     order_sales = group['sales_amount'].sum()
                     order_fees = group['fees'].sum()
                     order_aff = group['affiliate'].sum()
                     order_settle = group['settlement_amount'].sum()
-                    order_cost_total = group['total_cost'].sum() # Sum of line items
-                    
-                    # Ops Cost Logic (10 baht per order)
+                    order_cost_total = group['total_cost'].sum()
                     ops_cost = 10.0
-                    
-                    # Net Profit Recalculation: Sales - Cost - Fees - Aff - Ops
                     order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
-                    
-                    # Accumulate Totals
-                    sum_sales += order_sales
-                    sum_net_profit += order_net_profit
+                    sum_sales += order_sales; sum_net_profit += order_net_profit
 
-                    # Common Data
                     created_date_str = format_thai_date(group.iloc[0]['created_date'])
                     settle_date_str = format_thai_date(group.iloc[0]['settlement_date']) if group.iloc[0]['settlement_date'] else "-"
-                    
                     num_items = len(group)
                     
-                    # Loop Items
                     for i, (idx, row) in enumerate(group.iterrows()):
                         html += f'<tr style="background-color: {bg_color};" onmouseover="this.style.backgroundColor=\'{hover_color}\'" onmouseout="this.style.backgroundColor=\'{bg_color}\'">'
-                        
-                        # --- Merged Columns (First item only) ---
                         if i == 0:
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{created_date_str}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{order_id}</td>'
                         
-                        # --- Individual Columns (Product Info) ---
                         prod_name = row.get('product_name', '-')
                         sku = row.get('sku', '-')
                         unit_cost = row.get('unit_cost', 0)
-                        
-                        # คำนวณ %Cost รายตัว: (Cost / Sales) 
-                        # เนื่องจาก Sales ถูก Merge เป็นยอดรวมออเดอร์ เพื่อให้เห็น Margin ของสินค้าตัวนั้นเทียบกับยอดขายเฉลี่ย หรือ ยอดขายรวม
-                        # แต่เพื่อความถูกต้องทางบัญชี: %Cost = Item Cost / Item Sales
-                        # เรามี row['sales_amount'] ที่ pro-rate มาแล้ว ใช้ตัวนั้นคำนวณ % ได้เลย แม้หน้าเว็บจะโชว์ Sales รวม
                         item_sales = row.get('sales_amount', 0)
                         pct_cost = fmt_pct(unit_cost, item_sales)
                         
                         html += f'<td style="border:1px solid #333; padding:5px;">{prod_name}</td>'
                         html += f'<td style="border:1px solid #333; text-align:center;">{sku}</td>'
                         
-                        # --- Merged Financials (First item only) ---
                         if i == 0:
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_sales)}</td>'
                         
-                        # --- Individual Cost ---
                         html += f'<td style="border:1px solid #333; text-align:right;">{fmt_num(unit_cost)}</td>'
                         html += f'<td style="border:1px solid #333; text-align:center;">{pct_cost}</td>'
                         
-                        # --- Merged Remaining Financials ---
                         if i == 0:
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_fees)}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_fees, order_sales)}</td>'
-                            
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_aff)}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_aff, order_sales)}</td>'
-                            
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(ops_cost)}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(ops_cost, order_sales)}</td>'
-                            
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{settle_date_str}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_settle)}</td>'
-                            
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right; font-weight:bold;">{fmt_num(order_net_profit)}</td>'
                             html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_net_profit, order_sales)}</td>'
-                        
                         html += "</tr>"
 
-                # Total Row
                 html += f"""
                 <tr style="background-color: #010538; font-weight: bold;">
                     <td colspan="4" style="text-align: center; padding: 10px; border-top: 2px solid #555;">รวมทั้งหมด</td>
@@ -910,19 +821,13 @@ with tab_details:
                     <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_net_profit, sum_sales)}</td>
                 </tr>
                 """
-                
                 html += "</tbody></table>"
-                
                 st.markdown(f'<div class="custom-table-wrapper">{html}</div>', unsafe_allow_html=True)
-
     except Exception as e: st.error(f"Error Details: {e}")
 
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
-    
-    # 1. Filters
     col_filters_ads = st.columns([1, 1, 1, 1])
-    
     with col_filters_ads[0]: 
         sel_year_ads = st.selectbox("ปี", [2024, 2025, 2026], index=1, key="ads_year")
     with col_filters_ads[1]: 
@@ -934,13 +839,11 @@ with tab_ads:
         d_start_ads = date(sel_year_ads, m_idx_ads, 1)
         d_end_ads = date(sel_year_ads, m_idx_ads, days_ads)
     except:
-        d_start_ads = today.replace(day=1)
-        d_end_ads = today
+        d_start_ads = today.replace(day=1); d_end_ads = today
 
     with col_filters_ads[2]: d_start_ads = st.date_input("วันที่เริ่ม", d_start_ads, key="ads_d_start")
     with col_filters_ads[3]: d_end_ads = st.date_input("ถึงวันที่", d_end_ads, key="ads_d_end")
 
-    # 2. Data Preparation
     try:
         ads_res = supabase.table("daily_ads").select("*").gte("date", str(d_start_ads)).lte("date", str(d_end_ads)).execute()
         db_ads = pd.DataFrame(ads_res.data)
@@ -951,21 +854,15 @@ with tab_ads:
 
     date_range_ads = pd.date_range(start=d_start_ads, end=d_end_ads)
     editor_data = []
-    
     for d in date_range_ads:
         d_date = d.date()
-        current_ads = 0.0
-        current_roas = 0.0
+        current_ads = 0.0; current_roas = 0.0
         if not db_ads.empty and d_date in db_ads.index:
             current_ads = float(db_ads.loc[d_date, 'ads_amount'])
             current_roas = float(db_ads.loc[d_date, 'roas_ads'])
         editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS ADS': current_roas})
 
     st.markdown("---")
-    
-    # ==================================================
-    # 🔘 ปุ่มบันทึก (ย้ายมาไว้ด้านบน)
-    # ==================================================
     col_btn, col_info = st.columns([2, 5])
     with col_btn:
         save_ads_clicked = st.button("💾 บันทึกข้อมูลค่า ADS", type="primary", use_container_width=True)
@@ -973,89 +870,44 @@ with tab_ads:
         st.info(f"📅 ช่วงวันที่: {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
 
     st.markdown("##### 📝 กรอกข้อมูลลงในตารางด้านล่าง")
-    
-    # ตาราง Data Editor (Height 1200)
-    edited_df = st.data_editor(
-        pd.DataFrame(editor_data),
-        column_config={
-            "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
-            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100),
-            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)
-        },
-        hide_index=True,
-        num_rows="fixed",
-        use_container_width=True,
-        height=1200, 
-        key="ads_editor_tab"
-    )
+    edited_df = st.data_editor(pd.DataFrame(editor_data), column_config={"วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True), "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100), "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)}, hide_index=True, num_rows="fixed", use_container_width=True, height=1200, key="ads_editor_tab")
 
-    # Logic บันทึก (ทำงานเมื่อปุ่มด้านบนถูกกด)
     if save_ads_clicked:
         upsert_data = []
         for _, row in edited_df.iterrows():
-            upsert_data.append({
-                "date": str(row['วันที่']),
-                "ads_amount": row['ค่า ADS'],
-                "roas_ads": row['ROAS ADS']
-            })
+            upsert_data.append({"date": str(row['วันที่']), "ads_amount": row['ค่า ADS'], "roas_ads": row['ROAS ADS']})
         try:
             supabase.table("daily_ads").upsert(upsert_data).execute()
             st.toast("✅ บันทึกข้อมูลเรียบร้อยแล้ว!", icon="💾")
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาด: {e}")
+        except Exception as e: st.error(f"เกิดข้อผิดพลาด: {e}")
 
-# --- TAB 3: MASTER COST ---
 with tab_cost:
-    st.subheader("💰 จัดการต้นทุน (แก้ไขเฉพาะ SKU และ ราคา)")
+    st.subheader("💰 จัดการต้นทุน")
     try:
         res = supabase.table("product_costs").select("*").execute()
         cur_data = pd.DataFrame(res.data)
         if cur_data.empty: cur_data = pd.DataFrame(columns=['sku', 'platform', 'unit_cost'])
-        
         display_df = cur_data[['sku', 'unit_cost', 'platform']].copy()
         
-        # ==================================================
-        # 🔘 ปุ่มบันทึก + ℹ️ ข้อความแจ้งเตือน
-        # ==================================================
-        col_c_btn, col_c_info = st.columns([2, 5]) # แบ่งสัดส่วน ปุ่ม : ข้อความ
-
-        with col_c_btn:
-            save_cost_clicked = st.button("💾 บันทึกต้นทุนสินค้า", type="primary", use_container_width=True)
+        col_c_btn, col_c_info = st.columns([2, 5])
+        with col_c_btn: save_cost_clicked = st.button("💾 บันทึกต้นทุนสินค้า", type="primary", use_container_width=True)
+        with col_c_info: st.info("สามารถใส่รายการสินค้าทุกแพลตฟอร์มลงในตารางด้านล่างได้เลย")
         
-        with col_c_info:
-            st.info("สามารถใส่รายการสินค้าทุกแพลตฟอร์มลงในตารางด้านล่างได้เลย")
+        edited = st.data_editor(display_df, column_config={"sku": st.column_config.TextColumn("รหัสสินค้า (SKU)", required=True), "unit_cost": st.column_config.NumberColumn("ต้นทุน (บาท)", format="%.2f", min_value=0), "platform": st.column_config.TextColumn("แพลตฟอร์ม", disabled=True)}, hide_index=True, num_rows="dynamic", use_container_width=True, height=1000)
         
-        # ตาราง Data Editor (Height 1000)
-        edited = st.data_editor(
-            display_df,
-            column_config={
-                "sku": st.column_config.TextColumn("รหัสสินค้า (SKU)", required=True),
-                "unit_cost": st.column_config.NumberColumn("ต้นทุน (บาท)", format="%.2f", min_value=0),
-                "platform": st.column_config.TextColumn("แพลตฟอร์ม", disabled=True),
-            },
-            hide_index=True,
-            num_rows="dynamic",
-            use_container_width=True,
-            height=1000
-        )
-        
-        # Logic บันทึก
         if save_cost_clicked:
             if not edited.empty:
                 edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
                 supabase.table("product_costs").delete().neq("id", 0).execute()
                 supabase.table("product_costs").insert(edited.to_dict('records')).execute()
                 st.success("✅ บันทึกต้นทุนสำเร็จ!")
-                # st.rerun() 
     except Exception as e: st.error(f"Error Cost: {e}")
 
-# --- TAB 3: OLD TABLE ---
 with tab_old:
     st.subheader("📂 ตารางข้อมูลดิบ (Legacy)")
     try:
         res = supabase.table("orders").select("*").execute()
         if res.data:
-            old_df = pd.DataFrame(res.data)
-            st.dataframe(old_df, height=2500, use_container_width=True)
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True)
         else: st.info("ไม่มีข้อมูล")
     except: pass
