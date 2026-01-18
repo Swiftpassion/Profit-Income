@@ -349,7 +349,12 @@ def process_tiktok(order_files, income_files, shop_name):
     
     # --- Part 4: Merge with Income Data ---
     if not income_master.empty:
+        # Trim extra spaces to ensure the merge keys match perfectly
+        final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
+        income_master['order_id'] = income_master['order_id'].astype(str).str.strip()
+
         merged = pd.merge(final_orders, income_master, on='order_id', how='left')
+        
         for col in ['settlement_amount', 'affiliate', 'fees']:
             if col in merged.columns:
                 merged[col] = merged[col].fillna(0)
