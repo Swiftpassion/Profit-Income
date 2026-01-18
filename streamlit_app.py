@@ -115,16 +115,25 @@ def download_file(file_id):
 def clean_date(df, col_name):
     """
     แปลงข้อมูลเป็นวันที่ (Date Only) ตัดเวลาทิ้ง
-    รองรับ: 27/12/2025 12:32:17 -> 2025-12-27
+    รองรับทั้ง:
+    - TikTok/Thai: 27/12/2025 (DD/MM/YYYY)
+    - Shopee/ISO:  2026-01-09 00:02 (YYYY-MM-DD HH:MM)
     """
     if col_name in df.columns:
         # 1. แปลงเป็น String และลบช่องว่าง
         df[col_name] = df[col_name].astype(str).str.strip()
+        
         # 2. จัดการค่าว่าง
         df[col_name] = df[col_name].replace({'nan': None, 'None': None, '': None, 'NaT': None})
-        # 3. แปลงเป็น DateTime แล้วตัดเหลือแค่ Date
-        # dayfirst=True สำคัญมากสำหรับ Format ไทย (dd/mm/yyyy)
-        df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True).dt.date
+        
+        # 3. แปลงเป็น DateTime
+        # ใช้ format='mixed' เพื่อให้ Pandas แยกแยะ format ของแต่ละแถวได้เอง
+        try:
+            df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True, format='mixed').dt.date
+        except (ValueError, TypeError):
+            # Fallback กรณี Pandas เวอร์ชั่นเก่าที่ยังไม่มี 'mixed'
+            df[col_name] = pd.to_datetime(df[col_name], errors='coerce', dayfirst=True).dt.date
+            
     return df
 
 def clean_text(df, col_name):
@@ -1138,6 +1147,6 @@ with tab_old:
     try:
         res = supabase.table("orders").select("*").execute()
         if res.data:
-            st.dataframe(pd.DataFrame(res.data), use_container_width=True, height="auto")
+            st.dataframe(pd.DataFrame(res.data), use_container_width=True, height="stretch")
         else: st.info("ไม่มีข้อมูล")
     except: pass
