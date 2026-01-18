@@ -514,45 +514,60 @@ with tab_dash:
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # ==========================================
-            # 3. HTML GENERATION (STYLING UPDATE)
+            # 3. HTML GENERATION (แก้ไข CSS: ตัวหนังสือสีขาว)
             # ==========================================
             
-            # CSS สำหรับ Dark Mode Table
             st.markdown("""
             <style>
+                /* Reset Table Styles */
                 table.report-table {
                     border-collapse: collapse;
                     width: 100%;
-                    color: #ffffff; /* Default text white */
+                    font-size: 13px;
                 }
+                
+                /* Header Styles */
                 table.report-table th { 
                     color: #ffffff !important; 
                     font-weight: bold !important; 
                     border: 1px solid #444 !important; 
                     padding: 8px;
+                    text-align: center;
                 }
+                
+                /* Cell Styles (บังคับตัวหนังสือสีขาว) */
                 table.report-table td {
+                    color: #ffffff !important; 
                     border: 1px solid #333;
                     padding: 6px;
+                    vertical-align: middle;
                 }
-                /* Dark Mode Rows */
+                
+                /* Row Backgrounds (Dark Mode) */
                 table.report-table tbody tr:nth-of-type(odd) { background-color: #1c1c1c; }
                 table.report-table tbody tr:nth-of-type(even) { background-color: #262626; }
+                
+                /* Hover Effect */
                 table.report-table tbody tr:hover { background-color: #333333 !important; }
                 
-                /* Footer Row */
-                .total-row { 
+                /* Footer Row (Total) */
+                tr.total-row td { 
                     background-color: #010538 !important; 
-                    font-weight: bold; 
-                    color: #ffffff;
+                    color: #ffffff !important; 
+                    font-weight: bold;
+                    border-top: 2px solid #555;
                 }
                 
-                /* Utils */
+                /* Utils: Negative Numbers (Red) */
                 .text-red { color: #fa0000 !important; font-weight: bold; }
+                
+                /* Alignments */
+                .num { text-align: right; }
+                .txt { text-align: center; }
             </style>
             """, unsafe_allow_html=True)
 
-            # กำหนดสี Header ตามโจทย์
+            # กำหนดสี Header Background
             h_blue   = "#1e3c72"
             h_cyan   = "#22b8e6"
             h_orange = "#e67e22"
@@ -594,16 +609,16 @@ with tab_dash:
                 <tbody>
             """)
 
-            # Helper จัดสีตัวเลข (แดงเมื่อติดลบ)
+            # Helper Formatting
             def fmt_val(val, is_percent=False):
                 s_val = f"{val:,.1f}%" if is_percent else f"{val:,.2f}"
-                if is_percent: # ถ้าเป็น % ไม่ต้องใส่คอมม่าทศนิยมก็ได้ แต่ตามโค้ดเดิม
-                     s_val = f"{val:.1f}%"
+                if is_percent: s_val = f"{val:.1f}%"
                 
+                # ถ้าติดลบ ให้ใช้ Class text-red (ซึ่ง CSS set ไว้เป็นสีแดง #fa0000)
                 if val < 0: return f'<span class="text-red">{s_val}</span>'
                 return s_val
 
-            # วนลูปสร้างแถวข้อมูล
+            # Loop Rows
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
@@ -639,7 +654,7 @@ with tab_dash:
                 </tr>"""
                 html_parts.append(row_html.replace('\n', ''))
 
-            # --- คำนวณแถวสรุป (Total Row) ---
+            # Total Row
             sum_sales = calc['sales_sum'].sum()
             sum_cost = calc['cost_sum'].sum()
             sum_fee = calc['fees_sum'].sum()
@@ -651,7 +666,6 @@ with tab_dash:
             sum_ops = calc['ค่าดำเนินการ'].sum()
             sum_net_profit = calc['กำไรสุทธิ'].sum()
             
-            # คำนวณ % ภาพรวม
             total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
             
             total_html = f"""
@@ -690,7 +704,7 @@ with tab_dash:
             
         else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
     except Exception as e: st.error(f"Error Processing: {e}")
-    
+
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
     
