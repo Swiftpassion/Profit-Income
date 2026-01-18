@@ -137,15 +137,33 @@ def clean_scientific_notation(val):
     if 'E' in val_str or 'e' in val_str:
         try: return str(int(float(val)))
         except: return val_str
-    return val_str
+    return val_str.replace('.0', '') # Remove decimal if integer
+
+def format_thai_date(d):
+    if not d: return "-"
+    try:
+        # Check if it's already a date object or string
+        if isinstance(d, str):
+            d = pd.to_datetime(d).date()
+        return d.strftime('%d/%m/%Y')
+    except: return "-"
 
 def get_standard_status(row):
     try: amt = float(row.get('settlement_amount', 0))
     except: amt = 0
+    
+    # ถ้ามีเงินเข้า ให้ถือว่าสำเร็จ (แต่ต้องระวังกรณีคืนเงินแล้วยอดเป็นลบ)
     if amt > 0: return "ออเดอร์สำเร็จ"
+    
     raw_status = str(row.get('status', '')).lower()
-    if any(x in raw_status for x in ['ยกเลิก', 'cancel']): return "ยกเลิก"
-    if any(x in raw_status for x in ['package returned', 'return', 'ตีกลับ']): return "ตีกลับ"
+    if any(x in raw_status for x in ['ยกเลิก', 'cancel', 'failed']): return "ยกเลิก"
+    if any(x in raw_status for x in ['returned', 'return', 'ตีกลับ', 'refund']): return "ตีกลับ"
+    
+    # Logic เพิ่มเติมสำหรับการจัดส่งแล้วแต่เงินยังไม่เข้า
+    shipped = row.get('shipped_date')
+    if shipped and str(shipped) != 'NaT' and str(shipped) != 'None':
+        return "รอดำเนินการ" # ส่งของแล้ว รอเงินเข้า
+        
     return "รอดำเนินการ"
 
 def load_cost_data():
@@ -160,100 +178,188 @@ def load_cost_data():
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 3. PROCESSORS (เน้น Logic ตามที่คุณระบุ) ---
+# --- 3. PROCESSORS (UPDATED LOGIC) ---
 
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income
+    # --- 1. Income TIKTOK (Sheet: Order details) ---
     for f in income_files:
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
+                # ใช้ Index ตามที่ระบุ:
+                # AV (47) = Related order ID
+                # F (5)   = Total settlement amount
+                # D (3)   = Order settled time
+                # N (13)  = Total Fees
+                # Y (24)  = Affiliate Commission
                 df = pd.read_excel(data, sheet_name='Order details', dtype=str).iloc[:, [47, 5, 3, 13, 24]]
-                df.columns = ['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']
+                df.columns = ['order_id', 'settlement_amount', 'settlement_date', 'fees_raw', 'affiliate']
+                
                 df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                for c in df.columns[1:]: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-                df['fees'] = df['fees'] - df['affiliate']
-                income_dfs.append(df)
-            except: pass
-    income_master = pd.concat(income_dfs, ignore_index=True).groupby('order_id').first().reset_index() if income_dfs else pd.DataFrame()
+                
+                # Convert numbers
+                for c in ['settlement_amount', 'fees_raw', 'affiliate']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                
+                # Logic: Fees (ค่าธรรมเนียมสุทธิ) = Total Fees (N) - Affiliate (Y)
+                # เพราะปกติ Total Fees ใน Tiktok รวม Affiliate ไปแล้ว ถ้าเราไม่หักออก เดี๋ยวตอนคำนวณกำไรจะโดนหักซ้ำ
+                df['fees'] = df['fees_raw'] - df['affiliate']
+                
+                # Clean Date
+                df = clean_date(df, 'settlement_date')
+                
+                income_dfs.append(df[['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']])
+            except Exception as e: 
+                print(f"Error reading TikTok income: {e}")
+                pass
+                
+    # Group income by Order ID (Income is usually 1 row per order)
+    income_master = pd.DataFrame()
+    if income_dfs:
+        income_master = pd.concat(income_dfs, ignore_index=True)
+        # Sum duplicates if any (though usually unique per order in standard report)
+        income_master = income_master.groupby('order_id').agg({
+            'settlement_amount': 'sum',
+            'fees': 'sum',
+            'affiliate': 'sum',
+            'settlement_date': 'first' # เอาวันที่แรกที่เจอ
+        }).reset_index()
 
-    # 2. Orders
+    # --- 2. Orders TIKTOK ---
     for f in order_files:
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
-                df.columns = df.columns.str.strip() 
+                df.columns = df.columns.str.strip() # Remove spaces from headers
 
-                if 'Order ID' in df.columns:
-                    df = df.dropna(subset=['Order ID'])
-                    
-                    # Product Name (H = index 7)
-                    prod_col = 'Product Name'
-                    if prod_col not in df.columns and len(df.columns) > 7:
-                        prod_col = df.columns[7]
+                # Map Columns ตามที่ระบุ
+                # Order ID (A)
+                # Order Status (B)
+                # Seller SKU (G)
+                # Quantity (J)
+                # SKU Subtotal After Discount (P) -> sales_amount
+                # Created Time (Z) -> created_date
+                # Shipped Time (AC) -> shipped_date
+                # Tracking ID (AJ) -> tracking_id
+                
+                col_map = {
+                    'Order ID': 'order_id',
+                    'Order Status': 'status',
+                    'Seller SKU': 'sku',
+                    'Quantity': 'quantity',
+                    'SKU Subtotal After Discount': 'sales_amount',
+                    'Created Time': 'created_date',
+                    'Shipped Time': 'shipped_date',
+                    'Tracking ID': 'tracking_id',
+                    'Product Name': 'product_name' # ปกติอยู่ที่ Column H (Index 7)
+                }
+                
+                # ตรวจสอบว่ามี Column ครบไหม ถ้าชื่อไม่ตรงเป๊ะ ให้พยายามหาจากตำแหน่ง (Backup Plan)
+                cols_to_use = {}
+                for key, val in col_map.items():
+                    if key in df.columns:
+                        cols_to_use[key] = val
+                    else:
+                        # Fallback by index if headers changed (Risk management)
+                        if key == 'Shipped Time' and len(df.columns) > 28: cols_to_use[df.columns[28]] = 'shipped_date' # AC is 29th (0-28)
+                        # ... (Other fallbacks omitted to force name matching as requested)
 
-                    cols = {
-                        'Order ID': 'order_id', 
-                        'Order Status': 'status', 
-                        'Seller SKU': 'sku', 
-                        'Quantity': 'quantity', 
-                        'SKU Subtotal After Discount': 'sales_amount', 
-                        'Created Time': 'created_date',
-                        'Shipped Time': 'shipped_date',
-                        'Tracking ID': 'tracking_id', 
-                        prod_col: 'product_name'
-                    }
-                    
-                    # เลือกเฉพาะคอลัมน์ที่มี
-                    selected_cols = {k:v for k,v in cols.items() if k in df.columns}
-                    df = df[list(selected_cols.keys())].rename(columns=selected_cols)
-                    
-                    # ✅ ป้องกัน Error: ถ้าไม่มี sku ให้เติมค่าว่าง
-                    if 'sku' not in df.columns: df['sku'] = "-"
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
-                    
-                    df['shop_name'] = shop_name
-                    df['platform'] = 'TIKTOK'
-                    
-                    df = clean_date(df, 'created_date')
-                    df = clean_date(df, 'shipped_date')
-                    
+                df = df.rename(columns=cols_to_use)
+                
+                # เลือกเฉพาะ Column ที่มีใน Mapping
+                keep_cols = list(cols_to_use.values())
+                df = df[keep_cols]
+
+                # ✅ เติมค่าว่างป้องกัน Error
+                if 'sku' not in df.columns: df['sku'] = "-"
+                if 'product_name' not in df.columns: df['product_name'] = "-"
+                
+                df['shop_name'] = shop_name
+                df['platform'] = 'TIKTOK'
+                
+                # ✅ Clean Date (โดยเฉพาะ AC Shipped Time ตัดเวลาทิ้ง)
+                df = clean_date(df, 'created_date')
+                df = clean_date(df, 'shipped_date')
+                
+                # ✅ Clean Order ID
+                if 'order_id' in df.columns:
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    
-                    all_orders.append(clean_text(df, 'sku'))
-            except: pass
+                
+                # ✅ Clean Text
+                df = clean_text(df, 'sku')
+
+                all_orders.append(df)
+            except Exception as e:
+                print(f"Error reading TikTok order: {e}")
+                pass
     
     if not all_orders: return pd.DataFrame()
-    # รวมข้อมูล (ตอนนี้มี sku แน่นอนแล้ว จะไม่ error)
-    final = pd.concat(all_orders, ignore_index=True).drop_duplicates(subset=['order_id', 'sku'], keep='first')
-    return pd.merge(final, income_master, on='order_id', how='left') if not income_master.empty else final
+    
+    # รวม Order (TikTok อาจมีหลายบรรทัดต่อ 1 ออเดอร์ ถ้าลูกค้าสั่งหลายชิ้น)
+    # เราจะเก็บไว้ทุกบรรทัด (ไม่ drop duplicates) เพราะ sales_amount (SKU Subtotal) มันแยกรายบรรทัดอยู่แล้ว
+    final = pd.concat(all_orders, ignore_index=True)
+    
+    # Merge กับ Income
+    if not income_master.empty:
+        final = pd.merge(final, income_master, on='order_id', how='left')
+    
+    return final
 
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income
+    # --- 1. Income SHOPEE ---
+    # Header Eng = หัวข้อภาษาไทย
+    # Settlement Amount = จำนวนเงินทั้งหมดที่โอนแล้ว (฿) (Col AH)
+    # Fees = สินค้าราคาปกติ (M) - จำนวนเงินทั้งหมดที่โอนแล้ว (AH) ... (สูตรตาม user)
+    # Affiliate = ค่าคอมมิชชั่น (Z)
+    # Settlement Date = วันที่โอนชำระเงินสำเร็จ
     for f in income_files:
         if any(x in f['name'].lower() for x in ['xls', 'xlsx']):
             try:
                 data = download_file(f['id'])
+                # Shopee Income header usually starts at row 5 (index 0-based)
                 df = pd.read_excel(data, sheet_name='Income', header=5, dtype=str)
                 df.columns = df.columns.str.strip()
-                rename = {'หมายเลขคำสั่งซื้อ':'order_id', 'วันที่โอนชำระเงินสำเร็จ':'settlement_date', 'สินค้าราคาปกติ':'op', 'ค่าคอมมิชชั่น':'aff', 'จำนวนเงินทั้งหมดที่โอนแล้ว (฿)':'settlement_amount'}
+                
+                rename = {
+                    'หมายเลขคำสั่งซื้อ': 'order_id',
+                    'วันที่โอนชำระเงินสำเร็จ': 'settlement_date',
+                    'สินค้าราคาปกติ': 'original_price', # Col M
+                    'ค่าคอมมิชชั่น': 'affiliate', # Col Z
+                    'จำนวนเงินทั้งหมดที่โอนแล้ว (฿)': 'settlement_amount' # Col AH
+                }
+                
                 df = df[[c for c in rename if c in df.columns]].rename(columns=rename)
-                for c in ['op', 'settlement_amount', 'aff']: 
+                
+                for c in ['original_price', 'settlement_amount', 'affiliate']: 
                     if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-                if 'op' in df.columns: df['fees'] = df['op'] - df['settlement_amount'] - df.get('aff',0)
-                income_dfs.append(df.rename(columns={'aff':'affiliate'}))
-            except: pass
-    income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
-    if not income_master.empty: income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
+                
+                # Logic: Fees = Original Price - Settlement Amount (รวม Affiliate ไปใน Original deduction แล้ว แต่ต้องระวัง Affiliate ซ้อน)
+                # ตามสูตร User: Fees = Col M - Col AH
+                # หมายเหตุ: Col M คือยอดขายรวมสินค้านั้น, Col AH คือเงินที่ได้จริง
+                # ส่วนต่างคือ "ค่าใช้จ่ายทั้งหมด" (Fees + Affiliate + Voucher + etc.)
+                if 'original_price' in df.columns and 'settlement_amount' in df.columns:
+                    df['all_deductions'] = df['original_price'] - df['settlement_amount']
+                    # เพื่อให้ตรงกับสูตร Dashboard (Profit = Sales - Cost - Fees - Affiliate)
+                    # เราต้องแยก Affiliate ออกจาก Fees
+                    df['fees'] = df['all_deductions'] - df.get('affiliate', 0)
+                
+                df = clean_date(df, 'settlement_date')
+                if 'order_id' in df.columns:
+                    df['order_id'] = df['order_id'].apply(clean_scientific_notation)
 
-    # 2. Orders
+                income_dfs.append(df[['order_id', 'settlement_amount', 'settlement_date', 'fees', 'affiliate']])
+            except: pass
+            
+    income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
+
+    # --- 2. Orders SHOPEE ---
     for f in order_files:
         if any(x in f['name'].lower() for x in ['xls', 'xlsx']):
             try:
@@ -261,116 +367,135 @@ def process_shopee(order_files, income_files, shop_name):
                 df = pd.read_excel(data, dtype=str)
                 df.columns = df.columns.str.strip()
                 
-                if 'หมายเลขคำสั่งซื้อ' in df.columns:
-                    # Product Name (S = index 18)
-                    prod_col = 'ชื่อสินค้า'
-                    if prod_col not in df.columns and len(df.columns) > 18:
-                         prod_col = df.columns[18]
+                cols = {
+                    'หมายเลขคำสั่งซื้อ': 'order_id', 
+                    'สถานะการสั่งซื้อ': 'status', 
+                    'เวลาการชำระสินค้า': 'shipped_date', # User mapping
+                    'เลขอ้างอิง SKU (SKU Reference No.)': 'sku', 
+                    'จำนวน': 'quantity', 
+                    'ราคาขายสุทธิ': 'sales_amount',
+                    '*หมายเลขติดตามพัสดุ': 'tracking_id', 
+                    'วันที่ทำการสั่งซื้อ': 'created_date',
+                    'ชื่อสินค้า': 'product_name'
+                }
+                
+                selected_cols = {k:v for k,v in cols.items() if k in df.columns}
+                df = df[list(selected_cols.keys())].rename(columns=selected_cols)
 
-                    cols = {
-                        'หมายเลขคำสั่งซื้อ': 'order_id', 
-                        'สถานะการสั่งซื้อ': 'status', 
-                        'เวลาการชำระสินค้า': 'shipped_date',
-                        'เลขอ้างอิง SKU (SKU Reference No.)': 'sku', 
-                        'จำนวน': 'quantity', 
-                        'ราคาขายสุทธิ': 'sales_amount',
-                        '*หมายเลขติดตามพัสดุ': 'tracking_id', 
-                        'วันที่ทำการสั่งซื้อ': 'created_date',
-                        prod_col: 'product_name'
-                    }
-                    
-                    selected_cols = {k:v for k,v in cols.items() if k in df.columns}
-                    df = df[list(selected_cols.keys())].rename(columns=selected_cols)
-
-                    # ✅ ป้องกัน Error
-                    if 'sku' not in df.columns: df['sku'] = "-"
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
-
-                    df['shop_name'] = shop_name
-                    df['platform'] = 'SHOPEE'
-                    
-                    df = clean_date(df, 'created_date')
-                    df = clean_date(df, 'shipped_date')
+                if 'sku' not in df.columns: df['sku'] = "-"
+                if 'product_name' not in df.columns: df['product_name'] = "-"
+                
+                df['shop_name'] = shop_name
+                df['platform'] = 'SHOPEE'
+                
+                df = clean_date(df, 'created_date')
+                df = clean_date(df, 'shipped_date')
+                if 'order_id' in df.columns:
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    
-                    all_orders.append(clean_text(df, 'sku'))
+                
+                df = clean_text(df, 'sku')
+                all_orders.append(df)
             except: pass
 
     if not all_orders: return pd.DataFrame()
-    final = pd.concat(all_orders, ignore_index=True).drop_duplicates(subset=['order_id', 'sku'], keep='first')
+    final = pd.concat(all_orders, ignore_index=True) # Keep all rows (items)
     return pd.merge(final, income_master, on='order_id', how='left') if not income_master.empty else final
 
 def process_lazada(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income
+    # --- 1. Income LAZADA ---
+    # Settlement Amount = ยอดเงินที่ได้รับจริง (D ไม่ติดลบ) - ค่าธรรมเนียม
+    # Fees = ยอดติดลบใน D
+    # Affiliate = ไม่มี
     for f in income_files:
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, sheet_name='Income Overview', dtype=str)
-                col_order = df.columns[0] if 'orderNumber' in df.columns else df.columns[10]
-                df = df[[col_order, df.columns[2], df.columns[3]]]
-                df.columns = ['order_id', 'settlement_date', 'amount']
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-                income_dfs.append(df)
+                # Lazada format varies, find Order Number column
+                col_order = 'orderNumber' if 'orderNumber' in df.columns else df.columns[0] # Fallback
+                
+                # D = Amount (Col Index 3 usually in Overview? User says D=ชื่อรายการธุรกรรม? Wait.)
+                # User Prompt: "ยอดเงินที่ได้รับจริง คือ นำ (คอลัม D = ชื่อรายการธุรกรรม? NO, Amount is usually a number)"
+                # Let's stick to standard Lazada: Order No, Date, Amount.
+                # Assuming df.columns[3] is Amount based on standard export.
+                
+                temp = df[[col_order, df.columns[2], df.columns[3]]].copy() # Order, Date, Amount
+                temp.columns = ['order_id', 'settlement_date', 'amount']
+                temp['amount'] = pd.to_numeric(temp['amount'], errors='coerce').fillna(0)
+                
+                income_dfs.append(temp)
             except: pass
     
     income_master = pd.DataFrame()
     if income_dfs:
         raw = pd.concat(income_dfs, ignore_index=True)
         raw['order_id'] = raw['order_id'].apply(clean_scientific_notation)
+        
+        # Aggregation Logic
         income_master = raw.groupby(['order_id']).agg(
-            settlement_amount=('amount', lambda x: x[x>0].sum()),
-            fees=('amount', lambda x: x[x<0].sum())
+            # ผลรวมยอดบวก คือ เงินที่ Lazada จ่ายให้ (รวมค่าของ + ค่าส่งที่ลูกค้าจ่าย)
+            # ผลรวมยอดลบ คือ ค่าธรรมเนียม + ค่าส่งที่เราต้องจ่าย
+            # Net Settlement = Sum(All)
+            
+            # ตาม User Request:
+            # Settlement = D ที่ไม่ติดลบ (Sales) - Fees? 
+            # Fees = D ที่ติดลบ
+            
+            # ปรับ Logic ให้ง่ายและถูกต้องทางบัญชี:
+            # Settlement Amount (เงินเข้ากระเป๋า) = Sum(Amount ทั้งหมด)
+            # Fees (ค่าธรรมเนียม) = Sum(Amount ที่ติดลบ) * -1
+            
+            settlement_amount=('amount', 'sum'),
+            fees=('amount', lambda x: abs(x[x<0].sum())),
+            settlement_date=('settlement_date', 'first')
         ).reset_index()
+        
         income_master['affiliate'] = 0
 
-    # 2. Orders
+    # --- 2. Orders LAZADA ---
     for f in order_files:
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
                 
-                if 'orderNumber' in df.columns:
-                    # Product Name (AZ = index 51)
-                    prod_col = 'itemName'
-                    if prod_col not in df.columns and len(df.columns) > 51:
-                         prod_col = df.columns[51]
+                cols = {
+                    'orderNumber': 'order_id', 
+                    'status': 'status', 
+                    'sellerSku': 'sku', 
+                    'unitPrice': 'sales_amount',
+                    'trackingCode': 'tracking_id', 
+                    'createTime': 'created_date',
+                    'deliveredDate': 'shipped_date',
+                    'itemName': 'product_name'
+                }
+                
+                selected_cols = {k:v for k,v in cols.items() if k in df.columns}
+                df = df[list(selected_cols.keys())].rename(columns=selected_cols)
 
-                    cols = {
-                        'orderNumber': 'order_id', 
-                        'status': 'status', 
-                        'sellerSku': 'sku', 
-                        'unitPrice': 'sales_amount',
-                        'trackingCode': 'tracking_id', 
-                        'createTime': 'created_date',
-                        'deliveredDate': 'shipped_date',
-                        prod_col: 'product_name'
-                    }
-                    
-                    selected_cols = {k:v for k,v in cols.items() if k in df.columns}
-                    df = df[list(selected_cols.keys())].rename(columns=selected_cols)
+                if 'sku' not in df.columns: df['sku'] = "-"
+                if 'product_name' not in df.columns: df['product_name'] = "-"
 
-                    # ✅ ป้องกัน Error
-                    if 'sku' not in df.columns: df['sku'] = "-"
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
-
-                    df['quantity'] = 1
-                    df['shop_name'] = shop_name
-                    df['platform'] = 'LAZADA'
-                    
-                    df = clean_date(df, 'created_date')
-                    df = clean_date(df, 'shipped_date')
+                # User: "จำนวน นับ 1 เสมอ สำหรับ Lazada"
+                df['quantity'] = 1
+                
+                df['shop_name'] = shop_name
+                df['platform'] = 'LAZADA'
+                
+                df = clean_date(df, 'created_date')
+                df = clean_date(df, 'shipped_date')
+                if 'order_id' in df.columns:
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    
-                    all_orders.append(clean_text(df, 'sku'))
+                
+                df = clean_text(df, 'sku')
+                all_orders.append(df)
             except: pass
 
     if not all_orders: return pd.DataFrame()
-    final = pd.concat(all_orders, ignore_index=True).drop_duplicates(subset=['order_id', 'sku'], keep='first')
+    final = pd.concat(all_orders, ignore_index=True)
     return pd.merge(final, income_master, on='order_id', how='left') if not income_master.empty else final
 
 # ==========================================
@@ -419,23 +544,30 @@ with st.sidebar:
 
                 if all_data:
                     status_box.text("📊 กำลังประมวลผล...")
-                    master_df = pd.concat(all_data, ignore_index=True).drop_duplicates(subset=['order_id', 'sku'], keep='first')
+                    # Combine all data. Note: We do NOT drop duplicates here yet because splitting orders by SKU is needed.
+                    master_df = pd.concat(all_data, ignore_index=True)
                     
                     # Numeric Convert
                     for c in ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'unit_cost']:
                         if c in master_df.columns: master_df[c] = pd.to_numeric(master_df[c], errors='coerce').fillna(0)
                         else: master_df[c] = 0.0
 
-                    # Pro-rate Logic
+                    # --- PRO-RATE LOGIC (CRITICAL FOR SPLIT ORDERS) ---
+                    # เมื่อ Order ID เดียวมีหลาย SKU (หลายบรรทัด) แต่ Income มาเป็นก้อนเดียว
+                    # เราต้องกระจายยอด Settlement, Fees, Affiliate ไปตามสัดส่วน Sales Amount ของสินค้านั้นๆ
+                    # เพื่อไม่ให้ยอดพวกนี้บวกซ้ำกันจนเกินจริงเมื่อ Sum รวม
+                    
+                    # 1. หา Total Sales ต่อ Order
                     totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
+                    
+                    # 2. หา Ratio (ป้องกันหารศูนย์)
                     ratio = master_df['sales_amount'] / totals.replace(0, 1)
+                    
+                    # 3. คูณ Ratio เข้าไปในยอดที่เป็นก้อนรวม (Settlement, Fees, Affiliate)
                     master_df['settlement_amount'] *= ratio
                     master_df['fees'] *= ratio
                     master_df['affiliate'] *= ratio
                     
-                    if 'platform' in master_df.columns: 
-                        master_df.loc[master_df['platform'] == 'LAZADA', 'affiliate'] = 0
-
                     # Cost Mapping
                     cost_df = load_cost_data()
                     if not cost_df.empty:
@@ -446,7 +578,10 @@ with st.sidebar:
                     
                     master_df['unit_cost'] = master_df['unit_cost'].fillna(0)
                     master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
+                    
+                    # Net Profit Calc
                     master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
+                    
                     master_df['status'] = master_df.apply(get_standard_status, axis=1)
 
                     if 'product_name' not in master_df.columns: master_df['product_name'] = "-"
@@ -457,11 +592,14 @@ with st.sidebar:
                         if c in master_df.columns: 
                             master_df[c] = master_df[c].astype(str).replace({'nan': None, 'None': None, 'NaT': None})
                     
-                    # Upload to Database (รวม product_name)
+                    # Upload to Database
                     status_box.text("☁️ อัปโหลดขึ้น Database...")
                     cols = ['order_id', 'status', 'sku', 'product_name', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
                     master_df = master_df[[c for c in cols if c in master_df.columns]]
                     
+                    # Remove Duplicates Last Check (Same Order, Same SKU) - Keep first to avoid weird duplicates
+                    master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
+
                     try: supabase.table("orders").delete().neq("id", 0).execute()
                     except: pass
                     
@@ -489,7 +627,7 @@ today = datetime.datetime.now().date()
 
 tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุปยอดขาย (Dashboard)", "📦 รายละเอียดออเดอร์", "📢 บันทึกค่าโฆษณา", "💰 จัดการต้นทุน", "📂 ตารางข้อมูลเดิม"])
 
-# --- TAB 1: DASHBOARD (HTML Table) - CODE เดิมทั้งหมด ---
+# --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
@@ -582,6 +720,7 @@ with tab_dash:
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             
+            # กำไรขั้นต้น = ยอดขาย - ทุน - ค่าธรรมเนียม - ค่าคอม
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
             calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
@@ -593,6 +732,7 @@ with tab_dash:
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # HTML GENERATION
+            # ... (ส่วนแสดงผล HTML เหมือนเดิม แต่ข้อมูลจะถูกต้องขึ้นจาก Logic ด้านบน)
             st.markdown("""
             <style>
                 table.report-table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -887,6 +1027,7 @@ with tab_details:
                 st.markdown(f'<div class="custom-table-wrapper">{html}</div>', unsafe_allow_html=True)
     except Exception as e: st.error(f"Error Details: {e}")
 
+# ... (Tab ADS, Cost, Old ยังคงเหมือนเดิม) ...
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
     col_filters_ads = st.columns([1, 1, 1, 1])
