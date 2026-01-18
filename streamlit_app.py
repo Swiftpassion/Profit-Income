@@ -324,10 +324,23 @@ def process_tiktok(order_files, income_files, shop_name):
                 # แสดงตัวอย่างข้อมูล
                 if len(extracted_data) > 0:
                     st.write("📝 ตัวอย่างข้อมูล 3 แถวแรก:")
-                    sample_data = extracted_data.head(3)[['order_id', 'sku', 'quantity', 'sales_amount', 'product_name']]
-                    st.write(sample_data)
+                    # ตรวจสอบว่าคอลัมน์ที่ต้องการมีอยู่ใน extracted_data หรือไม่
+                    sample_cols = ['order_id', 'sku', 'quantity', 'sales_amount', 'product_name']
+                    sample_cols = [col for col in sample_cols if col in extracted_data.columns]
+                    if sample_cols:
+                        sample_data = extracted_data.head(3)[sample_cols]
+                        st.write(sample_data)
+                    else:
+                        st.write("ไม่มีคอลัมน์ตัวอย่างที่ต้องการ")
                 
-                all_orders.append(extracted_data)
+                if not all_orders:
+                    st.warning("❌ ไม่พบข้อมูล TikTok Orders")
+                    return pd.DataFrame()
+    
+                st.write(f"จำนวนไฟล์ที่ประมวลผล: {len(all_orders)}")
+                st.write(f"ขนาดของแต่ละ DataFrame ใน all_orders: {[df.shape for df in all_orders]}")
+    
+                final = pd.concat(all_orders, ignore_index=True)
                 
             except Exception as e:
                 st.error(f"❌ ไฟล์ {f['name']}: {e}")
@@ -551,6 +564,18 @@ with st.sidebar:
                             if not df_res.empty: all_data.append(df_res)
 
                 if all_data:
+                    # Debug: ตรวจสอบข้อมูลแต่ละแพลตฟอร์มก่อนรวม
+                    st.write("🔍 ตรวจสอบข้อมูลแต่ละแพลตฟอร์มก่อนรวม:")
+                    for i, df in enumerate(all_data):
+                        if not df.empty:
+                            platform = df['platform'].iloc[0] if 'platform' in df.columns else 'Unknown'
+                            st.write(f"  - แพลตฟอร์ม {platform}: {len(df)} แถว")
+                            if platform == 'TIKTOK':
+                                st.write("    ตัวอย่างข้อมูล TikTok:")
+                                st.write(df.head(3))
+                        else:
+                            st.write(f"  - ชุดที่ {i+1}: DataFrame ว่างเปล่า")
+                    
                     status_box.text("📊 กำลังประมวลผล...")
                     # Combine all data. Note: We do NOT drop duplicates here yet because splitting orders by SKU is needed.
                     master_df = pd.concat(all_data, ignore_index=True)
