@@ -514,64 +514,69 @@ with tab_dash:
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # ==========================================
-            # 3. HTML GENERATION (แก้ไข CSS: ตัวหนังสือสีขาว)
+            # 3. HTML GENERATION (Dark Mode + Bar Chart + Full Totals)
             # ==========================================
             
             st.markdown("""
             <style>
-                /* Reset Table Styles */
-                table.report-table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    font-size: 13px;
-                }
+                table.report-table { border-collapse: collapse; width: 100%; font-size: 13px; }
                 
-                /* Header Styles */
+                /* Header */
                 table.report-table th { 
                     color: #ffffff !important; 
                     font-weight: bold !important; 
                     border: 1px solid #444 !important; 
-                    padding: 8px;
-                    text-align: center;
+                    padding: 8px; 
+                    text-align: center; 
                 }
                 
-                /* Cell Styles (บังคับตัวหนังสือสีขาว) */
-                table.report-table td {
+                /* Cells */
+                table.report-table td { 
                     color: #ffffff !important; 
-                    border: 1px solid #333;
-                    padding: 6px;
-                    vertical-align: middle;
+                    border: 1px solid #333; 
+                    padding: 6px; 
+                    vertical-align: middle; 
                 }
                 
-                /* Row Backgrounds (Dark Mode) */
+                /* Row Colors */
                 table.report-table tbody tr:nth-of-type(odd) { background-color: #1c1c1c; }
                 table.report-table tbody tr:nth-of-type(even) { background-color: #262626; }
-                
-                /* Hover Effect */
                 table.report-table tbody tr:hover { background-color: #333333 !important; }
                 
-                /* Footer Row (Total) */
+                /* Total Row */
                 tr.total-row td { 
                     background-color: #010538 !important; 
                     color: #ffffff !important; 
-                    font-weight: bold;
-                    border-top: 2px solid #555;
+                    font-weight: bold; 
+                    border-top: 2px solid #555; 
                 }
                 
-                /* Utils: Negative Numbers (Red) */
+                /* Utilities */
                 .text-red { color: #fa0000 !important; font-weight: bold; }
-                
-                /* Alignments */
                 .num { text-align: right; }
                 .txt { text-align: center; }
+                
+                /* Progress Bar (ปรับให้เข้ากับ Dark Mode) */
+                .bar-container {
+                    position: absolute;
+                    bottom: 0; left: 0;
+                    height: 4px; /* ความสูงเส้นบาร์ */
+                    background-color: #27ae60; /* สีเขียว */
+                    opacity: 0.7;
+                    z-index: 1;
+                }
+                .cell-content {
+                    position: relative;
+                    z-index: 2; /* ตัวหนังสือต้องอยู่บนบาร์ */
+                }
+                td.relative-cell {
+                    position: relative;
+                    padding-bottom: 8px; /* เพิ่มพื้นที่ให้บาร์ */
+                }
             </style>
             """, unsafe_allow_html=True)
 
-            # กำหนดสี Header Background
-            h_blue   = "#1e3c72"
-            h_cyan   = "#22b8e6"
-            h_orange = "#e67e22"
-            h_green  = "#27ae60"
+            h_blue = "#1e3c72"; h_cyan = "#22b8e6"; h_orange = "#e67e22"; h_green = "#27ae60"
 
             html_parts = []
             html_parts.append(f"""
@@ -609,20 +614,29 @@ with tab_dash:
                 <tbody>
             """)
 
-            # Helper Formatting
             def fmt_val(val, is_percent=False):
                 s_val = f"{val:,.1f}%" if is_percent else f"{val:,.2f}"
                 if is_percent: s_val = f"{val:.1f}%"
-                
-                # ถ้าติดลบ ให้ใช้ Class text-red (ซึ่ง CSS set ไว้เป็นสีแดง #fa0000)
                 if val < 0: return f'<span class="text-red">{s_val}</span>'
                 return s_val
 
-            # Loop Rows
+            # คำนวณ Max Profit สำหรับ Bar Chart
+            max_profit = calc['กำไรสุทธิ'].max()
+            if max_profit <= 0: max_profit = 1
+
             for _, r in calc.iterrows():
                 sales = r['sales_sum']
                 net_profit = r['กำไรสุทธิ']
                 date_str = format_thai_date(r['created_date'])
+
+                # คำนวณความยาวบาร์
+                bar_width = 0
+                if net_profit > 0: 
+                    bar_width = min((net_profit / max_profit) * 100, 100)
+                
+                bar_html = ""
+                if bar_width > 0:
+                    bar_html = f'<div class="bar-container" style="width: {bar_width}%;"></div>'
 
                 row_html = f"""
                 <tr>
@@ -649,12 +663,16 @@ with tab_dash:
                     <td class="num">{fmt_val(safe_div(r['ค่าแอดรวม'], sales), True)}</td>
                     <td class="num">{fmt_val(r['ค่าดำเนินการ'])}</td>
                     <td class="num">{fmt_val(safe_div(r['ค่าดำเนินการ'], sales), True)}</td>
-                    <td class="num font-bold">{fmt_val(net_profit)}</td>
+                    <td class="num font-bold relative-cell">
+                        <span class="cell-content">{fmt_val(net_profit)}</span>
+                        {bar_html}
+                    </td>
+                    
                     <td class="num">{fmt_val(safe_div(net_profit, sales), True)}</td>
                 </tr>"""
                 html_parts.append(row_html.replace('\n', ''))
 
-            # Total Row
+            # --- TOTAL ROW CALCULATION (ปรับปรุงสูตรตามสั่ง) ---
             sum_sales = calc['sales_sum'].sum()
             sum_cost = calc['cost_sum'].sum()
             sum_fee = calc['fees_sum'].sum()
@@ -666,7 +684,9 @@ with tab_dash:
             sum_ops = calc['ค่าดำเนินการ'].sum()
             sum_net_profit = calc['กำไรสุทธิ'].sum()
             
+            # ค่าคำนวณพิเศษ
             total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
+            avr_ROAS_ADS = calc['manual_roas'].mean() if len(calc) > 0 else 0
             
             total_html = f"""
             <tr class="total-row">
@@ -678,8 +698,7 @@ with tab_dash:
                 <td class="num">{int(calc['cancel_count'].sum())}</td>
                 <td class="num">{fmt_val(sum_sales)}</td>
                 <td class="num">{fmt_val(total_roas)}</td>
-                <td class="num">-</td>
-                <td class="num">{fmt_val(sum_cost)}</td>
+                <td class="num">{fmt_val(avr_ROAS_ADS)}</td> <td class="num">{fmt_val(sum_cost)}</td>
                 <td class="num">{fmt_val(safe_div(sum_cost, sum_sales), True)}</td>
                 <td class="num">{fmt_val(sum_fee)}</td>
                 <td class="num">{fmt_val(safe_div(sum_fee, sum_sales), True)}</td>
