@@ -208,32 +208,55 @@ def get_col_data(df, candidates):
 # --- 3. PROCESSORS (แก้ไข process_tiktok โดยเฉพาะ) ---
 
 def process_tiktok(order_files, income_files, shop_name):
-    # --- ส่วนที่ 1: ฟังก์ชันย่อยสำหรับอ่านไฟล์ Income ---
+    # --- Part 1: Helper function to load income files ---
     def load_tiktok_income(inc_files):
         income_dfs = []
         for f in inc_files:
-            if 'xlsx' in f['name'].lower() or 'xls' in f['name'].lower():
+            # Check for xlsx, xls, AND csv
+            if any(ext in f['name'].lower() for ext in ['xlsx', 'xls', 'csv']):
                 try:
                     data = download_file(f['id'])
-                    # หา Header ของไฟล์ Income (ต้องมีคำว่า Settlement หรือ Affiliate)
-                    header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission'])
-                    df = pd.read_excel(data, header=header_idx, dtype=str)
+                    
+                    # Determine file type and read accordingly
+                    if 'csv' in f['name'].lower():
+                        # For CSV, we might need to handle encoding. 'utf-8-sig' covers BOM.
+                        # We read a preview first to find header
+                        data.seek(0)
+                        # CSVs usually don't have complex multi-row headers like Excel reports sometimes do, 
+                        # but we still use find_header_row logic for consistency if needed.
+                        # However, for simplicity and typical CSV structure, let's assume standard reading first
+                        # or use the find_header_row logic adapted for CSV lines if necessary.
+                        # Let's stick to reading it into a dataframe first.
+                        try:
+                            df = pd.read_csv(data, dtype=str)
+                        except UnicodeDecodeError:
+                            data.seek(0)
+                            df = pd.read_csv(data, encoding='cp874', dtype=str) # Try Thai encoding if utf-8 fails
+                        
+                        # If the CSV has garbage top rows, we might need more complex logic. 
+                        # But typically CSV exports are cleaner. 
+                        # Let's apply a basic check.
+                        
+                    else:
+                        # Excel logic
+                        header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission'])
+                        df = pd.read_excel(data, header=header_idx, dtype=str)
                     
                     inc = pd.DataFrame()
-                    # ดึง Order ID
+                    # Extract Order ID
                     oid = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ'])
                     if oid is None: continue
                     inc['order_id'] = oid
                     
-                    # ดึงยอดเงิน (Settlement)
+                    # Extract Settlement Amount
                     settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ'])
                     inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
                     
-                    # ดึงค่า Affiliate
+                    # Extract Affiliate
                     aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น'])
                     inc['affiliate'] = pd.to_numeric(aff, errors='coerce').fillna(0)
                     
-                    # ดึงค่า Fee อื่นๆ (ถ้ามี)
+                    # Extract Fees
                     fee = get_col_data(df, ['Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม'])
                     inc['fees'] = pd.to_numeric(fee, errors='coerce').fillna(0)
                     
@@ -246,58 +269,60 @@ def process_tiktok(order_files, income_files, shop_name):
                     continue
         
         if income_dfs:
-            # รวมทุกไฟล์ Income และลบ ID ซ้ำ (เผื่อไฟล์ซ้ำ)
             combined_inc = pd.concat(income_dfs, ignore_index=True)
-            # Group by Order ID เพื่อรวมยอด (กรณี 1 Order แตกหลายบรรทัดในไฟล์เงิน)
             return combined_inc.groupby('order_id')[['settlement_amount', 'affiliate', 'fees']].sum().reset_index()
         return pd.DataFrame()
 
-    # --- ส่วนที่ 2: โหลดข้อมูล Income เตรียมไว้ ---
+    # --- Part 2: Load Income Data ---
     income_master = load_tiktok_income(income_files)
 
-    # --- ส่วนที่ 3: อ่านไฟล์ Order ---
+    # --- Part 3: Read Order Files ---
     all_orders = []
     for f in order_files:
-        if 'xlsx' in f['name'].lower() or 'xls' in f['name'].lower():
+        # Check for xlsx, xls, AND csv
+        if any(ext in f['name'].lower() for ext in ['xlsx', 'xls', 'csv']):
             try:
                 data = download_file(f['id'])
                 
-                # สแกนหา Header (แก้ปัญหา SKU/Qty หาย)
-                header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Product Name'])
-                df = pd.read_excel(data, header=header_idx, dtype=str)
+                # Determine file type for reading
+                if 'csv' in f['name'].lower():
+                    # Attempt to read CSV with common encodings
+                    try:
+                        data.seek(0)
+                        df = pd.read_csv(data, dtype=str)
+                    except UnicodeDecodeError:
+                        data.seek(0)
+                        df = pd.read_csv(data, encoding='cp874', dtype=str)
+                else:
+                    # Excel logic with header search
+                    header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Product Name'])
+                    df = pd.read_excel(data, header=header_idx, dtype=str)
                 
                 extracted = pd.DataFrame()
                 
-                # Order ID
+                # Extract Columns
                 oid = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
                 if oid is None: continue
                 extracted['order_id'] = oid
 
-                # Status
                 status = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ'])
                 extracted['status'] = status if status is not None else 'สำเร็จ'
 
-                # SKU
                 sku = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID'])
                 extracted['sku'] = sku if sku is not None else '-'
 
-                # Quantity
                 qty = get_col_data(df, ['Quantity', 'จำนวน', 'Qty'])
                 extracted['quantity'] = pd.to_numeric(qty, errors='coerce').fillna(1) if qty is not None else 1
 
-                # Sales Amount (ยอดขายจากฝั่ง Order)
                 sales = get_col_data(df, ['SKU Subtotal After Discount', 'Order Amount', 'ยอดคำสั่งซื้อ'])
                 extracted['sales_amount'] = pd.to_numeric(sales, errors='coerce').fillna(0) if sales is not None else 0
 
-                # Dates
                 extracted['created_date'] = get_col_data(df, ['Created Time', 'เวลาที่สร้าง'])
                 extracted['shipped_date'] = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
                 
-                # Tracking
                 track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ'])
                 extracted['tracking_id'] = track if track is not None else '-'
                 
-                # Product Name
                 pname = get_col_data(df, ['Product Name', 'ชื่อสินค้า'])
                 extracted['product_name'] = pname if pname is not None else '-'
 
@@ -322,18 +347,14 @@ def process_tiktok(order_files, income_files, shop_name):
         
     final_orders = pd.concat(all_orders, ignore_index=True)
     
-    # --- ส่วนที่ 4: Merge ข้อมูลการเงินเข้ากับออเดอร์ ---
+    # --- Part 4: Merge with Income Data ---
     if not income_master.empty:
-        # Merge ด้วย Order ID
         merged = pd.merge(final_orders, income_master, on='order_id', how='left')
-        
-        # แทนค่า NaN ด้วย 0
         for col in ['settlement_amount', 'affiliate', 'fees']:
             if col in merged.columns:
                 merged[col] = merged[col].fillna(0)
         return merged
     else:
-        # ถ้าไม่มีไฟล์เงิน ก็ใส่ 0 ไปก่อน
         final_orders['settlement_amount'] = 0
         final_orders['affiliate'] = 0
         final_orders['fees'] = 0
