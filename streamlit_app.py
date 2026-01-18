@@ -184,6 +184,22 @@ def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
+    # ฟังก์ชันช่วยค้นหาชื่อคอลัมน์แบบยืดหยุ่น (แก้ปัญหาชื่อเปลี่ยน)
+    def find_col(columns, keywords):
+        # แปลงหัวตารางทั้งหมดเป็นตัวพิมพ์เล็กและตัดช่องว่าง
+        cols_lower = [str(c).lower().strip() for c in columns]
+        for key in keywords:
+            key_lower = key.lower().strip()
+            # 1. ลองหาแบบตรงเป๊ะ
+            if key_lower in cols_lower:
+                return columns[cols_lower.index(key_lower)]
+            # 2. ลองหาแบบมีคำนี้ผสมอยู่ (เช่น "Order ID" อาจเป็น "Order ID (Main)")
+            # แต่ต้องระวังคำซ้ำ ให้หาคำที่เฉพาะเจาะจง
+            for idx, col_name in enumerate(cols_lower):
+                if key_lower in col_name:
+                    return columns[idx]
+        return None
+
     # --- 1. Income TIKTOK ---
     for f in income_files:
         if 'xlsx' in f['name'].lower():
@@ -192,12 +208,14 @@ def process_tiktok(order_files, income_files, shop_name):
                 df_inc = pd.read_excel(data, sheet_name='Order details', dtype=str)
                 df_inc.columns = df_inc.columns.str.strip()
                 
-                # Fallback names
-                col_id = next((c for c in df_inc.columns if c in ['Order ID', 'Related order ID', 'Order ID.1']), None)
-                col_settle = next((c for c in df_inc.columns if c in ['Total settlement amount', 'Settlement Amount']), None)
-                col_fees = next((c for c in df_inc.columns if c in ['Total Fees', 'Transaction Fee', 'Fee']), None)
-                col_aff = next((c for c in df_inc.columns if c in ['Affiliate Commission', 'Affiliate Commission(VAT included)']), None)
-                col_date = next((c for c in df_inc.columns if c in ['Order settled time', 'Settlement Time']), None)
+                # Debug: แสดงชื่อคอลัมน์ที่เจอใน Income
+                # st.write(f"Income Cols ({f['name']}):", df_inc.columns.tolist())
+
+                col_id = find_col(df_inc.columns, ['Order ID', 'Related order ID'])
+                col_settle = find_col(df_inc.columns, ['Total settlement amount', 'Settlement Amount', 'Amount'])
+                col_fees = find_col(df_inc.columns, ['Total Fees', 'Fee', 'Service Fee'])
+                col_aff = find_col(df_inc.columns, ['Affiliate Commission', 'Affiliate'])
+                col_date = find_col(df_inc.columns, ['Order settled time', 'Settlement Time', 'Time'])
 
                 if col_id and col_settle:
                     temp = pd.DataFrame()
@@ -230,28 +248,34 @@ def process_tiktok(order_files, income_files, shop_name):
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
                 df.columns = df.columns.str.strip()
-                
+
+                # *** DEBUG: เปิดบรรทัดนี้เพื่อดูชื่อคอลัมน์จริง ถ้าข้อมูลยังไม่มา ***
+                # st.error(f"ไฟล์ {f['name']} มีหัวข้อดังนี้: {list(df.columns)}")
+
                 extracted_data = pd.DataFrame()
                 
-                # Check Order ID First
-                oid_col = next((c for c in df.columns if c in ['Order ID', 'Order No.']), None)
-                if not oid_col: continue
+                # ใช้ฟังก์ชันค้นหาแบบยืดหยุ่น
+                oid_col = find_col(df.columns, ['Order ID', 'Order No.'])
+                if not oid_col: continue # ถ้าหา Order ID ไม่เจอ ข้ามเลย
 
                 extracted_data['order_id'] = df[oid_col]
                 
-                # Check Other Columns
-                stat_col = next((c for c in df.columns if c in ['Order Status', 'Order Substatus']), None)
-                sku_col = next((c for c in df.columns if c in ['Seller SKU', 'SKU ID', 'Reference ID']), None)
-                qty_col = next((c for c in df.columns if c in ['Quantity', 'SKU Quantity']), None)
-                sale_col = next((c for c in df.columns if c in ['SKU Subtotal After Discount', 'SKU Subtotal', 'Original Price', 'Unit Price']), None)
-                create_col = next((c for c in df.columns if c in ['Created Time', 'Order Time']), None)
-                ship_col = next((c for c in df.columns if c in ['Shipped Time', 'RTS Time']), None)
-                track_col = next((c for c in df.columns if c in ['Tracking ID', 'Tracking No.', 'Waybill No.']), None)
-                prod_col = next((c for c in df.columns if c in ['Product Name', 'Item Name']), None)
+                # Mapping คอลัมน์ (ใส่ Keyword หลายๆ แบบเผื่อไว้)
+                stat_col = find_col(df.columns, ['Order Status', 'Status'])
+                sku_col = find_col(df.columns, ['Seller SKU', 'SKU ID', 'Reference ID', 'SKU'])
+                qty_col = find_col(df.columns, ['Quantity', 'SKU Quantity', 'Qty'])
+                
+                # ยอดขาย: สำคัญมาก TikTok ชอบใช้คำว่า "SKU Subtotal After Discount" หรือ "Original Price"
+                sale_col = find_col(df.columns, ['SKU Subtotal After Discount', 'SKU Subtotal', 'Unit Price', 'Original Price', 'Deal Price'])
+                
+                create_col = find_col(df.columns, ['Created Time', 'Order Time', 'Created time'])
+                ship_col = find_col(df.columns, ['Shipped Time', 'RTS Time', 'Shipped time'])
+                track_col = find_col(df.columns, ['Tracking ID', 'Tracking No', 'Waybill No', 'Tracking Number'])
+                prod_col = find_col(df.columns, ['Product Name', 'Item Name', 'Product'])
 
                 extracted_data['status'] = df[stat_col] if stat_col else "สำเร็จ"
                 extracted_data['sku'] = df[sku_col] if sku_col else "-"
-                extracted_data['quantity'] = df[qty_col] if qty_col else 0
+                extracted_data['quantity'] = df[qty_col] if qty_col else 1 # Default เป็น 1 ถ้าหาไม่เจอ
                 extracted_data['sales_amount'] = df[sale_col] if sale_col else 0
                 extracted_data['created_date'] = df[create_col] if create_col else None
                 extracted_data['shipped_date'] = df[ship_col] if ship_col else None
@@ -273,6 +297,7 @@ def process_tiktok(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final = pd.concat(all_orders, ignore_index=True)
     
+    # Merge กับ Income
     if not income_master.empty:
         final = pd.merge(final, income_master, on='order_id', how='left')
         
