@@ -201,14 +201,22 @@ def find_header_row(data_io, keywords):
 
 def get_col_data(df, candidates):
     """
-    ดึงข้อมูลคอลัมน์โดยค้นหาจากชื่อที่เป็นไปได้ (Case-insensitive & Strip whitespace)
+    ดึงข้อมูลคอลัมน์โดยค้นหาจากชื่อที่เป็นไปได้
+    - แก้ปัญหา: เว้นวรรคหน้าหลัง, เว้นวรรคตรงกลางเกิน, ขึ้นบรรทัดใหม่ (\n) ใน Header Excel
     """
-    cols_lower = [str(c).strip().lower() for c in df.columns]
+    # 1. สร้างรายการชื่อคอลัมน์แบบ Clean (เปลี่ยน \n เป็น space, ตัดช่องว่างเกิน, ตัวพิมพ์เล็ก)
+    # เช่น "Seller\nSKU" -> "seller sku", "Tracking   ID" -> "tracking id"
+    cols_norm = [" ".join(str(c).split()).lower() for c in df.columns]
+    
     for cand in candidates:
-        cand_clean = cand.strip().lower()
-        if cand_clean in cols_lower:
-            idx = cols_lower.index(cand_clean)
-            return df.iloc[:, idx] # Return data by index
+        # 2. Clean ชื่อที่เราต้องการหาให้เหมือนกัน
+        cand_clean = " ".join(cand.split()).lower()
+        
+        # 3. เทียบหา Index
+        if cand_clean in cols_norm:
+            idx = cols_norm.index(cand_clean)
+            return df.iloc[:, idx] # ดึงข้อมูลจาก Index ที่เจอ
+            
     return None
 
 # --- 3. PROCESSORS (REWRITTEN & ROBUST) ---
@@ -221,46 +229,51 @@ def process_tiktok(order_files, income_files, shop_name):
             try:
                 data = download_file(f['id'])
                 
-                # 1. สแกนหา Header Row อัตโนมัติ (แก้ปัญหาบรรทัดเลื่อน)
+                # 1. สแกนหาบรรทัด Header (บางทีไม่ได้อยู่บรรทัดแรก)
                 header_idx = find_header_row(data, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
+                
+                # อ่านไฟล์โดยใช้ Header ที่หาเจอ
                 df = pd.read_excel(data, header=header_idx, dtype=str)
                 
                 extracted = pd.DataFrame()
                 
-                # 2. ดึง Order ID (ถ้าไม่มีคือข้าม)
+                # 2. ดึง Order ID (ถ้าไม่มีคือจบ)
                 oid = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
                 if oid is None: continue
                 extracted['order_id'] = oid
 
-                # 3. ดึงฟิลด์อื่นๆ ด้วยระบบ Smart Search
+                # 3. ดึงคอลัมน์ต่างๆ (ชื่อไทย/อังกฤษ/มี Newline ก็จะหาเจอ)
                 extracted['status'] = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ', 'Status'])
                 if 'status' not in extracted.columns: extracted['status'] = 'สำเร็จ'
 
+                # Seller SKU (แก้ปัญหา Seller\nSKU)
                 sku = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID', 'SKU'])
                 extracted['sku'] = sku if sku is not None else '-'
 
+                # Quantity (แก้ปัญหา Quantity\n)
                 qty = get_col_data(df, ['Quantity', 'จำนวน', 'Qty'])
                 extracted['quantity'] = pd.to_numeric(qty, errors='coerce').fillna(1) if qty is not None else 1
 
-                # Sales: ยอดหลังหักส่วนลด -> ยอดรวม -> ราคาต่อหน่วย
+                # Sales Amount (ยอดขาย)
                 sales = get_col_data(df, ['SKU Subtotal After Discount', 'ยอดรวม SKU หลังหักส่วนลด', 'Order Amount', 'ยอดคำสั่งซื้อ'])
                 extracted['sales_amount'] = pd.to_numeric(sales, errors='coerce').fillna(0) if sales is not None else 0
 
                 extracted['created_date'] = get_col_data(df, ['Created Time', 'เวลาที่สร้าง', 'Order Creation Time'])
                 extracted['shipped_date'] = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
                 
+                # Tracking ID (แก้ปัญหา Tracking\nID)
                 track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ', 'Tracking Number'])
                 extracted['tracking_id'] = track if track is not None else '-'
                 
                 p_name = get_col_data(df, ['Product Name', 'ชื่อสินค้า', 'Product'])
                 extracted['product_name'] = p_name if p_name is not None else '-'
 
-                # Fields to be filled by logic/income file later
+                # Affiliate ไม่มีในไฟล์ Order ปกติ ให้เป็น 0 ไปก่อน
+                extracted['affiliate'] = 0 
+                
+                # ข้อมูลคงที่
                 extracted['settlement_amount'] = 0
                 extracted['fees'] = 0
-                extracted['affiliate'] = 0
-                
-                # Metadata
                 extracted['shop_name'] = shop_name
                 extracted['platform'] = 'TIKTOK'
 
