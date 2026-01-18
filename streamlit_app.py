@@ -188,94 +188,113 @@ def process_tiktok(order_files, income_files, shop_name):
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
-                df = pd.read_excel(data, dtype=str)
+                
+                # *** เปลี่ยนการอ่านไฟล์: ใช้ header=0, skiprows=[1] ***
+                # header=0: ใช้แถวแรกเป็นชื่อคอลัมน์
+                # skiprows=[1]: ข้ามแถวที่ 2 (คำอธิบายภาษาไทย)
+                df = pd.read_excel(data, dtype=str, header=0, skiprows=[1])
                 df.columns = df.columns.str.strip()
                 
-                # HARDCODE MAPPING ตามไฟล์ตัวอย่าง
-                # ตรวจสอบว่าไฟล์มีคอลัมน์ครบตามที่ต้องการ
+                st.write(f"✅ กำลังประมวลผลไฟล์: {f['name']}")
+                st.write(f"📋 คอลัมน์ที่พบ: {list(df.columns)}")
+                
+                # ตรวจสอบว่าคอลัมน์ที่ต้องการมีอยู่จริง
                 required_cols = ['Order ID', 'Order Status', 'Seller SKU', 'Quantity', 
                                 'SKU Subtotal After Discount', 'Created Time', 
                                 'Shipped Time', 'Tracking ID', 'Product Name']
                 
-                missing = [col for col in required_cols if col not in df.columns]
-                if missing:
-                    st.warning(f"⚠️ ไฟล์ {f['name']} ขาดคอลัมน์: {missing}")
-                    # ใช้คอลัมน์ที่ใกล้เคียง
+                # แปลงชื่อคอลัมน์ให้เป็น lowercase สำหรับการค้นหา
+                df_lower_cols = {col.lower().strip(): col for col in df.columns}
                 
-                # สร้าง extracted_data ด้วย mapping แบบตายตัว
+                # สร้าง extracted_data ด้วย mapping
                 extracted_data = pd.DataFrame()
                 
                 # 1. order_id
-                if 'Order ID' in df.columns:
-                    extracted_data['order_id'] = df['Order ID']
+                order_id_keys = ['order id', 'orderid', 'order no', 'order no.']
+                order_id_col = None
+                for key in order_id_keys:
+                    if key in df_lower_cols:
+                        order_id_col = df_lower_cols[key]
+                        break
+                
+                if order_id_col:
+                    extracted_data['order_id'] = df[order_id_col]
                 else:
-                    extracted_data['order_id'] = df.iloc[:, 0]  # คอลัมน์แรก
+                    st.error(f"❌ ไม่พบคอลัมน์ Order ID ใน {f['name']}")
+                    st.write(f"คอลัมน์ที่มี: {list(df.columns)}")
+                    continue
                 
                 # 2. status
-                if 'Order Status' in df.columns:
-                    extracted_data['status'] = df['Order Status']
-                else:
-                    extracted_data['status'] = 'สำเร็จ'
+                status_keys = ['order status', 'status']
+                status_col = None
+                for key in status_keys:
+                    if key in df_lower_cols:
+                        status_col = df_lower_cols[key]
+                        break
+                extracted_data['status'] = df[status_col] if status_col else 'สำเร็จ'
                 
                 # 3. sku
-                if 'Seller SKU' in df.columns:
-                    extracted_data['sku'] = df['Seller SKU']
-                else:
-                    extracted_data['sku'] = '-'
+                sku_keys = ['seller sku', 'sku', 'reference id', 'sku id']
+                sku_col = None
+                for key in sku_keys:
+                    if key in df_lower_cols:
+                        sku_col = df_lower_cols[key]
+                        break
+                extracted_data['sku'] = df[sku_col] if sku_col else '-'
                 
-                # 4. quantity (สำคัญมาก!)
-                if 'Quantity' in df.columns:
-                    extracted_data['quantity'] = df['Quantity']
-                else:
-                    # ลองหา column ที่มีคำว่า "Quantity"
-                    qty_col = None
-                    for col in df.columns:
-                        if 'quantity' in col.lower() or 'qty' in col.lower():
-                            qty_col = col
-                            break
-                    if qty_col:
-                        extracted_data['quantity'] = df[qty_col]
-                    else:
-                        extracted_data['quantity'] = 1  # default
+                # 4. quantity
+                qty_keys = ['quantity', 'qty', 'sku quantity']
+                qty_col = None
+                for key in qty_keys:
+                    if key in df_lower_cols:
+                        qty_col = df_lower_cols[key]
+                        break
+                extracted_data['quantity'] = df[qty_col] if qty_col else 1
                 
                 # 5. sales_amount
-                if 'SKU Subtotal After Discount' in df.columns:
-                    extracted_data['sales_amount'] = df['SKU Subtotal After Discount']
-                else:
-                    # ลองหา column ที่เกี่ยวกับยอดขาย
-                    sale_col = None
-                    for col in df.columns:
-                        if 'subtotal' in col.lower() or 'amount' in col.lower() or 'price' in col.lower():
-                            sale_col = col
-                            break
-                    if sale_col:
-                        extracted_data['sales_amount'] = df[sale_col]
-                    else:
-                        extracted_data['sales_amount'] = 0
+                sales_keys = ['sku subtotal after discount', 'unit price', 'original price', 'deal price']
+                sales_col = None
+                for key in sales_keys:
+                    if key in df_lower_cols:
+                        sales_col = df_lower_cols[key]
+                        break
+                extracted_data['sales_amount'] = df[sales_col] if sales_col else 0
                 
                 # 6. created_date
-                if 'Created Time' in df.columns:
-                    extracted_data['created_date'] = df['Created Time']
-                else:
-                    extracted_data['created_date'] = None
+                created_keys = ['created time', 'order time', 'created time']
+                created_col = None
+                for key in created_keys:
+                    if key in df_lower_cols:
+                        created_col = df_lower_cols[key]
+                        break
+                extracted_data['created_date'] = df[created_col] if created_col else None
                 
                 # 7. shipped_date
-                if 'Shipped Time' in df.columns:
-                    extracted_data['shipped_date'] = df['Shipped Time']
-                else:
-                    extracted_data['shipped_date'] = None
+                shipped_keys = ['shipped time', 'rts time']
+                shipped_col = None
+                for key in shipped_keys:
+                    if key in df_lower_cols:
+                        shipped_col = df_lower_cols[key]
+                        break
+                extracted_data['shipped_date'] = df[shipped_col] if shipped_col else None
                 
                 # 8. tracking_id
-                if 'Tracking ID' in df.columns:
-                    extracted_data['tracking_id'] = df['Tracking ID']
-                else:
-                    extracted_data['tracking_id'] = '-'
+                tracking_keys = ['tracking id', 'tracking no', 'waybill no']
+                tracking_col = None
+                for key in tracking_keys:
+                    if key in df_lower_cols:
+                        tracking_col = df_lower_cols[key]
+                        break
+                extracted_data['tracking_id'] = df[tracking_col] if tracking_col else '-'
                 
                 # 9. product_name
-                if 'Product Name' in df.columns:
-                    extracted_data['product_name'] = df['Product Name']
-                else:
-                    extracted_data['product_name'] = '-'
+                product_keys = ['product name', 'item name', 'product']
+                product_col = None
+                for key in product_keys:
+                    if key in df_lower_cols:
+                        product_col = df_lower_cols[key]
+                        break
+                extracted_data['product_name'] = df[product_col] if product_col else '-'
                 
                 # ข้อมูลพื้นฐาน
                 extracted_data['shop_name'] = shop_name
@@ -298,16 +317,26 @@ def process_tiktok(order_files, income_files, shop_name):
                 
                 st.write(f"✅ ดึงข้อมูล TikTok จาก {f['name']} สำเร็จ")
                 st.write(f"  - จำนวน: {len(extracted_data)} แถว")
+                st.write(f"  - order_id ตัวอย่าง: {extracted_data['order_id'].iloc[0] if len(extracted_data) > 0 else 'ไม่มีข้อมูล'}")
                 st.write(f"  - quantity มีค่าตั้งแต่ {extracted_data['quantity'].min()} ถึง {extracted_data['quantity'].max()}")
                 st.write(f"  - sales_amount รวม: {extracted_data['sales_amount'].sum():,.2f}")
+                
+                # แสดงตัวอย่างข้อมูล
+                if len(extracted_data) > 0:
+                    st.write("📝 ตัวอย่างข้อมูล 3 แถวแรก:")
+                    sample_data = extracted_data.head(3)[['order_id', 'sku', 'quantity', 'sales_amount', 'product_name']]
+                    st.write(sample_data)
                 
                 all_orders.append(extracted_data)
                 
             except Exception as e:
                 st.error(f"❌ ไฟล์ {f['name']}: {e}")
+                import traceback
+                st.write(traceback.format_exc())
                 continue
     
     if not all_orders:
+        st.warning("❌ ไม่พบข้อมูล TikTok Orders")
         return pd.DataFrame()
     
     final = pd.concat(all_orders, ignore_index=True)
@@ -315,15 +344,27 @@ def process_tiktok(order_files, income_files, shop_name):
     # ตรวจสอบข้อมูลสุดท้าย
     st.write("🎯 สรุปข้อมูล TikTok ที่ได้:")
     st.write(f"  - รวมทั้งหมด: {len(final)} แถว")
-    st.write(f"  - คอลัมน์: {final.columns.tolist()}")
     
     # ตรวจสอบคอลัมน์สำคัญ
     important_cols = ['order_id', 'quantity', 'sales_amount', 'tracking_id', 'product_name', 'created_date', 'shipped_date']
+    missing_cols = []
     for col in important_cols:
         if col in final.columns:
-            st.write(f"  - {col}: มีข้อมูล {final[col].notnull().sum()} จาก {len(final)} แถว")
+            non_null_count = final[col].notnull().sum()
+            st.write(f"  - ✅ {col}: มีข้อมูล {non_null_count}/{len(final)} แถว")
+            if non_null_count == 0:
+                st.warning(f"    ⚠️ คอลัมน์ {col} ว่างเปล่าทั้งหมด!")
         else:
+            missing_cols.append(col)
             st.error(f"  - ❌ {col}: ไม่มีคอลัมน์นี้!")
+    
+    if missing_cols:
+        st.error(f"❌ ขาดคอลัมน์สำคัญ: {missing_cols}")
+    
+    # ถ้าไม่มีคอลัมน์สำคัญ ให้สร้างคอลัมน์ว่าง
+    for col in missing_cols:
+        if col not in final.columns:
+            final[col] = None
     
     return final
 
