@@ -166,7 +166,7 @@ def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # 1. Income (Finance)
+    # 1. Income
     for f in income_files:
         if 'xlsx' in f['name'].lower():
             try:
@@ -186,15 +186,12 @@ def process_tiktok(order_files, income_files, shop_name):
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
-                df.columns = df.columns.str.strip() # ลบช่องว่างชื่อคอลัมน์
+                df.columns = df.columns.str.strip() 
 
-                # ตรวจสอบว่ามี Order ID หรือไม่
                 if 'Order ID' in df.columns:
-                    # ไม่ลบออเดอร์ที่ยังไม่ส่ง เพื่อให้เห็นออเดอร์ใหม่
                     df = df.dropna(subset=['Order ID'])
                     
-                    # --- ดึง Product Name (Column H) ---
-                    # พยายามหาจากชื่อ 'Product Name' ก่อน ถ้าไม่มีลองใช้ index 7 (Column H)
+                    # Product Name (H = index 7)
                     prod_col = 'Product Name'
                     if prod_col not in df.columns and len(df.columns) > 7:
                         prod_col = df.columns[7]
@@ -205,30 +202,33 @@ def process_tiktok(order_files, income_files, shop_name):
                         'Seller SKU': 'sku', 
                         'Quantity': 'quantity', 
                         'SKU Subtotal After Discount': 'sales_amount', 
-                        'Created Time': 'created_date',  # Col Z (ในไฟล์มักชื่อนี้)
-                        'Shipped Time': 'shipped_date',  # Col AC (ในไฟล์มักชื่อนี้)
+                        'Created Time': 'created_date',
+                        'Shipped Time': 'shipped_date',
                         'Tracking ID': 'tracking_id', 
-                        prod_col: 'product_name'         # Col H
+                        prod_col: 'product_name'
                     }
                     
                     # เลือกเฉพาะคอลัมน์ที่มี
                     selected_cols = {k:v for k,v in cols.items() if k in df.columns}
                     df = df[list(selected_cols.keys())].rename(columns=selected_cols)
                     
+                    # ✅ ป้องกัน Error: ถ้าไม่มี sku ให้เติมค่าว่าง
+                    if 'sku' not in df.columns: df['sku'] = "-"
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
+                    
                     df['shop_name'] = shop_name
                     df['platform'] = 'TIKTOK'
                     
-                    # --- จัดการวันที่ (ตัดเวลาทิ้ง) ---
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
                     
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
     
     if not all_orders: return pd.DataFrame()
+    # รวมข้อมูล (ตอนนี้มี sku แน่นอนแล้ว จะไม่ error)
     final = pd.concat(all_orders, ignore_index=True).drop_duplicates(subset=['order_id', 'sku'], keep='first')
     return pd.merge(final, income_master, on='order_id', how='left') if not income_master.empty else final
 
@@ -262,36 +262,36 @@ def process_shopee(order_files, income_files, shop_name):
                 df.columns = df.columns.str.strip()
                 
                 if 'หมายเลขคำสั่งซื้อ' in df.columns:
-                    # --- ดึง Product Name (Column S : ชื่อสินค้า) ---
+                    # Product Name (S = index 18)
                     prod_col = 'ชื่อสินค้า'
-                    # กรณีหาชื่อไม่เจอ ลอง index 18 (S)
                     if prod_col not in df.columns and len(df.columns) > 18:
                          prod_col = df.columns[18]
 
                     cols = {
                         'หมายเลขคำสั่งซื้อ': 'order_id', 
                         'สถานะการสั่งซื้อ': 'status', 
-                        'เวลาการชำระสินค้า': 'shipped_date', # Col H
+                        'เวลาการชำระสินค้า': 'shipped_date',
                         'เลขอ้างอิง SKU (SKU Reference No.)': 'sku', 
                         'จำนวน': 'quantity', 
                         'ราคาขายสุทธิ': 'sales_amount',
                         '*หมายเลขติดตามพัสดุ': 'tracking_id', 
-                        'วันที่ทำการสั่งซื้อ': 'created_date', # Col G
-                        prod_col: 'product_name'             # Col S
+                        'วันที่ทำการสั่งซื้อ': 'created_date',
+                        prod_col: 'product_name'
                     }
                     
                     selected_cols = {k:v for k,v in cols.items() if k in df.columns}
                     df = df[list(selected_cols.keys())].rename(columns=selected_cols)
 
+                    # ✅ ป้องกัน Error
+                    if 'sku' not in df.columns: df['sku'] = "-"
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
+
                     df['shop_name'] = shop_name
                     df['platform'] = 'SHOPEE'
                     
-                    # --- จัดการวันที่ (ตัดเวลาทิ้ง) ---
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
-                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
@@ -335,8 +335,7 @@ def process_lazada(order_files, income_files, shop_name):
                 df = pd.read_excel(data, dtype=str)
                 
                 if 'orderNumber' in df.columns:
-                    # --- ดึง Product Name (Column AZ : itemName) ---
-                    # AZ คือ index 51 (A-Z=26, AA-AZ=26+26=52, 0-based index = 51)
+                    # Product Name (AZ = index 51)
                     prod_col = 'itemName'
                     if prod_col not in df.columns and len(df.columns) > 51:
                          prod_col = df.columns[51]
@@ -347,24 +346,25 @@ def process_lazada(order_files, income_files, shop_name):
                         'sellerSku': 'sku', 
                         'unitPrice': 'sales_amount',
                         'trackingCode': 'tracking_id', 
-                        'createTime': 'created_date',    # Col I
-                        'deliveredDate': 'shipped_date', # Col P
-                        prod_col: 'product_name'         # Col AZ
+                        'createTime': 'created_date',
+                        'deliveredDate': 'shipped_date',
+                        prod_col: 'product_name'
                     }
                     
                     selected_cols = {k:v for k,v in cols.items() if k in df.columns}
                     df = df[list(selected_cols.keys())].rename(columns=selected_cols)
 
+                    # ✅ ป้องกัน Error
+                    if 'sku' not in df.columns: df['sku'] = "-"
+                    if 'product_name' not in df.columns: df['product_name'] = "-"
+
                     df['quantity'] = 1
                     df['shop_name'] = shop_name
                     df['platform'] = 'LAZADA'
                     
-                    # --- จัดการวันที่ (ตัดเวลาทิ้ง) ---
                     df = clean_date(df, 'created_date')
                     df = clean_date(df, 'shipped_date')
-                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
-                    if 'product_name' not in df.columns: df['product_name'] = "-"
                     
                     all_orders.append(clean_text(df, 'sku'))
             except: pass
