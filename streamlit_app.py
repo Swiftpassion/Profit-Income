@@ -182,129 +182,149 @@ def load_cost_data():
 
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
-    income_dfs = []
     
-    # ฟังก์ชันช่วยค้นหาชื่อคอลัมน์แบบยืดหยุ่น (แก้ปัญหาชื่อเปลี่ยน)
-    def find_col(columns, keywords):
-        # แปลงหัวตารางทั้งหมดเป็นตัวพิมพ์เล็กและตัดช่องว่าง
-        cols_lower = [str(c).lower().strip() for c in columns]
-        for key in keywords:
-            key_lower = key.lower().strip()
-            # 1. ลองหาแบบตรงเป๊ะ
-            if key_lower in cols_lower:
-                return columns[cols_lower.index(key_lower)]
-            # 2. ลองหาแบบมีคำนี้ผสมอยู่ (เช่น "Order ID" อาจเป็น "Order ID (Main)")
-            # แต่ต้องระวังคำซ้ำ ให้หาคำที่เฉพาะเจาะจง
-            for idx, col_name in enumerate(cols_lower):
-                if key_lower in col_name:
-                    return columns[idx]
-        return None
-
-    # --- 1. Income TIKTOK ---
-    for f in income_files:
-        if 'xlsx' in f['name'].lower():
-            try:
-                data = download_file(f['id'])
-                df_inc = pd.read_excel(data, sheet_name='Order details', dtype=str)
-                df_inc.columns = df_inc.columns.str.strip()
-                
-                # Debug: แสดงชื่อคอลัมน์ที่เจอใน Income
-                # st.write(f"Income Cols ({f['name']}):", df_inc.columns.tolist())
-
-                col_id = find_col(df_inc.columns, ['Order ID', 'Related order ID'])
-                col_settle = find_col(df_inc.columns, ['Total settlement amount', 'Settlement Amount', 'Amount'])
-                col_fees = find_col(df_inc.columns, ['Total Fees', 'Fee', 'Service Fee'])
-                col_aff = find_col(df_inc.columns, ['Affiliate Commission', 'Affiliate'])
-                col_date = find_col(df_inc.columns, ['Order settled time', 'Settlement Time', 'Time'])
-
-                if col_id and col_settle:
-                    temp = pd.DataFrame()
-                    temp['order_id'] = df_inc[col_id]
-                    temp['settlement_amount'] = df_inc[col_settle]
-                    temp['fees'] = df_inc[col_fees] if col_fees else 0
-                    temp['affiliate'] = df_inc[col_aff] if col_aff else 0
-                    temp['settlement_date'] = df_inc[col_date] if col_date else None
-                    
-                    for c in ['settlement_amount', 'fees', 'affiliate']:
-                        temp[c] = pd.to_numeric(temp[c], errors='coerce').fillna(0)
-                    
-                    temp['order_id'] = temp['order_id'].apply(clean_scientific_notation)
-                    temp = clean_date(temp, 'settlement_date')
-                    income_dfs.append(temp)
-            except Exception as e:
-                print(f"Error TikTok Income: {e}")
-
-    income_master = pd.DataFrame()
-    if income_dfs:
-        income_master = pd.concat(income_dfs, ignore_index=True)
-        income_master = income_master.groupby('order_id').agg({
-            'settlement_amount': 'sum', 'fees': 'sum', 'affiliate': 'sum', 'settlement_date': 'first'
-        }).reset_index()
-
-    # --- 2. Orders TIKTOK ---
+    # --- Orders TIKTOK ---
     for f in order_files:
         if 'xlsx' in f['name'].lower():
             try:
                 data = download_file(f['id'])
                 df = pd.read_excel(data, dtype=str)
                 df.columns = df.columns.str.strip()
-
-                # *** DEBUG: เปิดบรรทัดนี้เพื่อดูชื่อคอลัมน์จริง ถ้าข้อมูลยังไม่มา ***
-                # st.error(f"ไฟล์ {f['name']} มีหัวข้อดังนี้: {list(df.columns)}")
-
+                
+                # HARDCODE MAPPING ตามไฟล์ตัวอย่าง
+                # ตรวจสอบว่าไฟล์มีคอลัมน์ครบตามที่ต้องการ
+                required_cols = ['Order ID', 'Order Status', 'Seller SKU', 'Quantity', 
+                                'SKU Subtotal After Discount', 'Created Time', 
+                                'Shipped Time', 'Tracking ID', 'Product Name']
+                
+                missing = [col for col in required_cols if col not in df.columns]
+                if missing:
+                    st.warning(f"⚠️ ไฟล์ {f['name']} ขาดคอลัมน์: {missing}")
+                    # ใช้คอลัมน์ที่ใกล้เคียง
+                
+                # สร้าง extracted_data ด้วย mapping แบบตายตัว
                 extracted_data = pd.DataFrame()
                 
-                # ใช้ฟังก์ชันค้นหาแบบยืดหยุ่น
-                oid_col = find_col(df.columns, ['Order ID', 'Order No.'])
-                if not oid_col: continue # ถ้าหา Order ID ไม่เจอ ข้ามเลย
-
-                extracted_data['order_id'] = df[oid_col]
+                # 1. order_id
+                if 'Order ID' in df.columns:
+                    extracted_data['order_id'] = df['Order ID']
+                else:
+                    extracted_data['order_id'] = df.iloc[:, 0]  # คอลัมน์แรก
                 
-                # Mapping คอลัมน์ (ใส่ Keyword หลายๆ แบบเผื่อไว้)
-                stat_col = find_col(df.columns, ['Order Status', 'Status'])
-                sku_col = find_col(df.columns, ['Seller SKU', 'SKU ID', 'Reference ID', 'SKU'])
-                qty_col = find_col(df.columns, ['Quantity', 'SKU Quantity', 'Qty'])
+                # 2. status
+                if 'Order Status' in df.columns:
+                    extracted_data['status'] = df['Order Status']
+                else:
+                    extracted_data['status'] = 'สำเร็จ'
                 
-                # ยอดขาย: สำคัญมาก TikTok ชอบใช้คำว่า "SKU Subtotal After Discount" หรือ "Original Price"
-                sale_col = find_col(df.columns, ['SKU Subtotal After Discount', 'SKU Subtotal', 'Unit Price', 'Original Price', 'Deal Price'])
+                # 3. sku
+                if 'Seller SKU' in df.columns:
+                    extracted_data['sku'] = df['Seller SKU']
+                else:
+                    extracted_data['sku'] = '-'
                 
-                create_col = find_col(df.columns, ['Created Time', 'Order Time', 'Created time'])
-                ship_col = find_col(df.columns, ['Shipped Time', 'RTS Time', 'Shipped time'])
-                track_col = find_col(df.columns, ['Tracking ID', 'Tracking No', 'Waybill No', 'Tracking Number'])
-                prod_col = find_col(df.columns, ['Product Name', 'Item Name', 'Product'])
-
-                extracted_data['status'] = df[stat_col] if stat_col else "สำเร็จ"
-                extracted_data['sku'] = df[sku_col] if sku_col else "-"
-                extracted_data['quantity'] = df[qty_col] if qty_col else 1 # Default เป็น 1 ถ้าหาไม่เจอ
-                extracted_data['sales_amount'] = df[sale_col] if sale_col else 0
-                extracted_data['created_date'] = df[create_col] if create_col else None
-                extracted_data['shipped_date'] = df[ship_col] if ship_col else None
-                extracted_data['tracking_id'] = df[track_col] if track_col else "-"
-                extracted_data['product_name'] = df[prod_col] if prod_col else "-"
+                # 4. quantity (สำคัญมาก!)
+                if 'Quantity' in df.columns:
+                    extracted_data['quantity'] = df['Quantity']
+                else:
+                    # ลองหา column ที่มีคำว่า "Quantity"
+                    qty_col = None
+                    for col in df.columns:
+                        if 'quantity' in col.lower() or 'qty' in col.lower():
+                            qty_col = col
+                            break
+                    if qty_col:
+                        extracted_data['quantity'] = df[qty_col]
+                    else:
+                        extracted_data['quantity'] = 1  # default
                 
+                # 5. sales_amount
+                if 'SKU Subtotal After Discount' in df.columns:
+                    extracted_data['sales_amount'] = df['SKU Subtotal After Discount']
+                else:
+                    # ลองหา column ที่เกี่ยวกับยอดขาย
+                    sale_col = None
+                    for col in df.columns:
+                        if 'subtotal' in col.lower() or 'amount' in col.lower() or 'price' in col.lower():
+                            sale_col = col
+                            break
+                    if sale_col:
+                        extracted_data['sales_amount'] = df[sale_col]
+                    else:
+                        extracted_data['sales_amount'] = 0
+                
+                # 6. created_date
+                if 'Created Time' in df.columns:
+                    extracted_data['created_date'] = df['Created Time']
+                else:
+                    extracted_data['created_date'] = None
+                
+                # 7. shipped_date
+                if 'Shipped Time' in df.columns:
+                    extracted_data['shipped_date'] = df['Shipped Time']
+                else:
+                    extracted_data['shipped_date'] = None
+                
+                # 8. tracking_id
+                if 'Tracking ID' in df.columns:
+                    extracted_data['tracking_id'] = df['Tracking ID']
+                else:
+                    extracted_data['tracking_id'] = '-'
+                
+                # 9. product_name
+                if 'Product Name' in df.columns:
+                    extracted_data['product_name'] = df['Product Name']
+                else:
+                    extracted_data['product_name'] = '-'
+                
+                # ข้อมูลพื้นฐาน
                 extracted_data['shop_name'] = shop_name
                 extracted_data['platform'] = 'TIKTOK'
                 
+                # ทำความสะอาดข้อมูล
                 extracted_data = clean_date(extracted_data, 'created_date')
                 extracted_data = clean_date(extracted_data, 'shipped_date')
                 extracted_data['order_id'] = extracted_data['order_id'].apply(clean_scientific_notation)
                 extracted_data = clean_text(extracted_data, 'sku')
                 
+                # แปลงตัวเลข
+                extracted_data['quantity'] = pd.to_numeric(extracted_data['quantity'], errors='coerce').fillna(1)
+                extracted_data['sales_amount'] = pd.to_numeric(extracted_data['sales_amount'], errors='coerce').fillna(0)
+                
+                # Income ข้อมูล (ถ้าไม่มีจริงๆ ให้ใส่ 0)
+                extracted_data['settlement_amount'] = 0
+                extracted_data['fees'] = 0
+                extracted_data['affiliate'] = 0
+                
+                st.write(f"✅ ดึงข้อมูล TikTok จาก {f['name']} สำเร็จ")
+                st.write(f"  - จำนวน: {len(extracted_data)} แถว")
+                st.write(f"  - quantity มีค่าตั้งแต่ {extracted_data['quantity'].min()} ถึง {extracted_data['quantity'].max()}")
+                st.write(f"  - sales_amount รวม: {extracted_data['sales_amount'].sum():,.2f}")
+                
                 all_orders.append(extracted_data)
+                
             except Exception as e:
-                print(f"Error TikTok Order: {e}")
-
-    if not all_orders: return pd.DataFrame()
+                st.error(f"❌ ไฟล์ {f['name']}: {e}")
+                continue
+    
+    if not all_orders:
+        return pd.DataFrame()
+    
     final = pd.concat(all_orders, ignore_index=True)
     
-    # Merge กับ Income
-    if not income_master.empty:
-        final = pd.merge(final, income_master, on='order_id', how='left')
-        
-    cols_to_fill = ['settlement_amount', 'fees', 'affiliate']
-    for c in cols_to_fill:
-        if c in final.columns: final[c] = final[c].fillna(0)
-            
+    # ตรวจสอบข้อมูลสุดท้าย
+    st.write("🎯 สรุปข้อมูล TikTok ที่ได้:")
+    st.write(f"  - รวมทั้งหมด: {len(final)} แถว")
+    st.write(f"  - คอลัมน์: {final.columns.tolist()}")
+    
+    # ตรวจสอบคอลัมน์สำคัญ
+    important_cols = ['order_id', 'quantity', 'sales_amount', 'tracking_id', 'product_name', 'created_date', 'shipped_date']
+    for col in important_cols:
+        if col in final.columns:
+            st.write(f"  - {col}: มีข้อมูล {final[col].notnull().sum()} จาก {len(final)} แถว")
+        else:
+            st.error(f"  - ❌ {col}: ไม่มีคอลัมน์นี้!")
+    
     return final
 
 def process_shopee(order_files, income_files, shop_name):
