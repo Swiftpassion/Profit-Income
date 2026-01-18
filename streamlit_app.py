@@ -117,7 +117,7 @@ def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # Income Processing
+    # 1. Income (คงเดิม)
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -131,27 +131,45 @@ def process_tiktok(order_files, income_files, shop_name):
             except: pass
     income_master = pd.concat(income_dfs, ignore_index=True).groupby('order_id').first().reset_index() if income_dfs else pd.DataFrame()
 
-    # Order Processing
+    # 2. Orders (ปรับปรุงเรื่องวันที่)
     for f in order_files:
-        if 'xlsx' in f['name']:
+        if any(ext in f['name'].lower() for ext in ['xlsx', 'xls', 'csv']):
             try:
                 data = download_file(f['id'])
-                df = pd.read_excel(data, dtype=str)
+                df = pd.DataFrame()
+                
+                if 'csv' in f['name'].lower():
+                    for enc in ['utf-8', 'cp874', 'utf-8-sig', 'latin1']:
+                        try:
+                            data.seek(0)
+                            df = pd.read_csv(data, dtype=str, encoding=enc)
+                            if not df.empty and 'Order ID' in df.columns: break
+                        except: continue
+                else:
+                    df = pd.read_excel(data, dtype=str)
+
+                if df.empty: continue
+                df.columns = df.columns.str.strip()
+
+                # Tiktok: Shipped Time (AC), Created Time (Z)
                 if 'Shipped Time' in df.columns:
+                    df['Shipped Time'] = df['Shipped Time'].astype(str)
                     df = df.dropna(subset=['Shipped Time'])
-                    df = df[df['Shipped Time'].astype(str).str.strip() != '']
+                    df = df[df['Shipped Time'].str.strip() != '']
                     
-                    # Mapping Columns (Updated: Product Name from Column H which is usually 'Product Name')
-                    # หา Column Product Name (ปกติ TikTok Export จะชื่อ "Product Name")
-                    prod_col = 'Product Name' if 'Product Name' in df.columns else df.columns[7] # Fallback to index H
-                    
+                    prod_col = 'Product Name' if 'Product Name' in df.columns else df.columns[7]
+
                     cols = {'Order ID':'order_id', 'Order Status':'status', 'Seller SKU':'sku', 'Quantity':'quantity', 
                             'SKU Subtotal After Discount':'sales_amount', 'Created Time':'created_date', 
                             'Shipped Time':'shipped_date', 'Tracking ID':'tracking_id', prod_col: 'product_name'}
                     
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'TIKTOK'
-                    df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
+                    
+                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (27/12/2025 12:32:17 -> 2025-12-27)
+                    df = clean_date(df, 'created_date')
+                    df = clean_date(df, 'shipped_date')
+                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
@@ -165,7 +183,7 @@ def process_shopee(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # Income Processing
+    # 1. Income (คงเดิม)
     for f in income_files:
         if any(x in f['name'].lower() for x in ['xls', 'csv']):
             try:
@@ -185,7 +203,7 @@ def process_shopee(order_files, income_files, shop_name):
     income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
     if not income_master.empty: income_master['order_id'] = income_master['order_id'].apply(clean_scientific_notation)
 
-    # Order Processing
+    # 2. Orders (ปรับปรุงเรื่องวันที่)
     for f in order_files:
         if any(x in f['name'].lower() for x in ['xls', 'csv']):
             try:
@@ -206,19 +224,24 @@ def process_shopee(order_files, income_files, shop_name):
                 
                 if df.empty: continue
                 df.columns = df.columns.str.strip()
+                
+                # Shopee: เวลาการชำระสินค้า (H), วันที่ทำการสั่งซื้อ (G)
                 if 'เวลาการชำระสินค้า' in df.columns:
                     df = df.dropna(subset=['เวลาการชำระสินค้า'])
                     df = df[df['เวลาการชำระสินค้า'].astype(str).str.strip() != '']
                     
-                    # Mapping Columns (Updated: Product Name from 'ชื่อสินค้า')
                     cols = {'หมายเลขคำสั่งซื้อ':'order_id', 'สถานะการสั่งซื้อ':'status', 'เวลาการชำระสินค้า':'shipped_date',
                             'เลขอ้างอิง SKU (SKU Reference No.)':'sku', 'จำนวน':'quantity', 'ราคาขายสุทธิ':'sales_amount',
-                            '*หมายเลขติดตามพัสดุ':'tracking_id', 'วันที่ทำการสั่งซื้อ':'created_date', 
+                            '*หมายเลขติดตามพัสดุ':'tracking_id', 'วันที่ทำการสั่งซื้อ':'created_date',
                             'ชื่อสินค้า': 'product_name'}
                     
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['shop_name'] = shop_name; df['platform'] = 'SHOPEE'
-                    df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
+                    
+                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (2025-12-26 00:01 -> 2025-12-26)
+                    df = clean_date(df, 'created_date')
+                    df = clean_date(df, 'shipped_date')
+                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
@@ -232,7 +255,7 @@ def process_lazada(order_files, income_files, shop_name):
     all_orders = []
     income_dfs = []
     
-    # Income Processing
+    # 1. Income (คงเดิม)
     for f in income_files:
         if 'xlsx' in f['name']:
             try:
@@ -255,7 +278,7 @@ def process_lazada(order_files, income_files, shop_name):
         ).reset_index()
         income_master['affiliate'] = 0
 
-    # Order Processing
+    # 2. Orders (ปรับปรุงเรื่องวันที่)
     for f in order_files:
         if 'xlsx' in f['name']:
             try:
@@ -265,14 +288,18 @@ def process_lazada(order_files, income_files, shop_name):
                     df = df.dropna(subset=['trackingCode'])
                     df = df[df['trackingCode'].astype(str).str.strip() != '']
                     
-                    # Mapping Columns (Updated: Product Name from 'itemName')
+                    # Lazada: createTime (I), deliveredDate (P)
                     cols = {'orderNumber':'order_id', 'status':'status', 'sellerSku':'sku', 'unitPrice':'sales_amount',
                             'trackingCode':'tracking_id', 'createTime':'created_date', 'deliveredDate':'shipped_date',
                             'itemName': 'product_name'}
                     
                     df = df[[c for c in cols if c in df.columns]].rename(columns=cols)
                     df['quantity'] = 1; df['shop_name'] = shop_name; df['platform'] = 'LAZADA'
-                    df = clean_date(df, 'created_date'); df = clean_date(df, 'shipped_date')
+                    
+                    # ✅ เรียก clean_date เพื่อตัดเวลาทิ้ง (28 Dec 2025 13:38 -> 2025-12-28)
+                    df = clean_date(df, 'created_date')
+                    df = clean_date(df, 'shipped_date')
+                    
                     df['order_id'] = df['order_id'].apply(clean_scientific_notation)
                     if 'product_name' not in df.columns: df['product_name'] = "-"
                     all_orders.append(clean_text(df, 'sku'))
