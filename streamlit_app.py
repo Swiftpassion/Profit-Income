@@ -179,125 +179,128 @@ def load_cost_data():
     except: return pd.DataFrame()
 
 def find_header_row(data_io, required_keywords):
-    """
-    สแกน 20 บรรทัดแรก เพื่อหาว่าบรรทัดไหนคือ Header ที่แท้จริง
-    โดยบรรทัดนั้นต้องมีคำคีย์เวิร์ดที่ระบุไว้อย่างน้อย 1 คำ (หรือทั้งหมดถ้าจำเป็น)
-    """
     data_io.seek(0)
     try:
-        # อ่าน 20 บรรทัดแรกแบบไม่ระบุ Header
         preview = pd.read_excel(data_io, header=None, nrows=20, dtype=str)
-        
-        best_row_idx = 0
         max_matches = 0
-        
-        # วนลูปเช็คทีละบรรทัด
+        best_row_idx = 0
         for i, row in preview.iterrows():
-            # แปลงแถวนั้นเป็นข้อความยาวๆ ตัวพิมพ์เล็ก ตัดเว้นวรรค
             row_text = " ".join([str(x).lower().strip() for x in row.values if pd.notna(x)])
-            
-            # นับว่าเจอกี่คีย์เวิร์ดในบรรทัดนี้
-            matches = 0
-            for k in required_keywords:
-                if k.lower() in row_text:
-                    matches += 1
-            
-            # ถ้าพบคีย์เวิร์ดเยอะที่สุด ให้จำบรรทัดนี้ไว้
+            matches = sum(1 for k in required_keywords if k.lower() in row_text)
             if matches > max_matches:
                 max_matches = matches
                 best_row_idx = i
-                
-        # ถ้าเจอแมตช์บ้าง ให้ใช้บรรทัดนั้น, ถ้าไม่เจอเลย ใช้บรรทัดแรก (0)
         data_io.seek(0)
         return best_row_idx if max_matches > 0 else 0
-        
-    except Exception:
+    except:
         data_io.seek(0)
         return 0
 
 def get_col_data(df, candidates):
-    """
-    ค้นหาคอลัมน์แบบยืดหยุ่น (ตัดเว้นวรรค, ไม่สนตัวพิมพ์เล็กใหญ่, ไม่สน \n)
-    """
-    # เตรียมชื่อคอลัมน์ในไฟล์ให้เป็น format มาตรฐาน (ตัวเล็ก, ตัด space เกิน, ตัด newline)
-    # ตัวอย่าง: "Seller\nSKU " -> "seller sku"
     cols_norm = [" ".join(str(c).replace('\n', ' ').split()).lower() for c in df.columns]
-    
     for cand in candidates:
-        # เตรียมชื่อที่ต้องการหาให้เป็น format เดียวกัน
         cand_clean = " ".join(cand.split()).lower()
-        
-        # เทียบหา index
         if cand_clean in cols_norm:
             idx = cols_norm.index(cand_clean)
-            # คืนค่าข้อมูลคอลัมน์นั้น (ใช้ iloc เพื่อความชัวร์เรื่อง index)
             return df.iloc[:, idx]
-            
     return None
 
 # --- 3. PROCESSORS (แก้ไข process_tiktok โดยเฉพาะ) ---
 
 def process_tiktok(order_files, income_files, shop_name):
+    # --- ส่วนที่ 1: ฟังก์ชันย่อยสำหรับอ่านไฟล์ Income ---
+    def load_tiktok_income(inc_files):
+        income_dfs = []
+        for f in inc_files:
+            if 'xlsx' in f['name'].lower() or 'xls' in f['name'].lower():
+                try:
+                    data = download_file(f['id'])
+                    # หา Header ของไฟล์ Income (ต้องมีคำว่า Settlement หรือ Affiliate)
+                    header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission'])
+                    df = pd.read_excel(data, header=header_idx, dtype=str)
+                    
+                    inc = pd.DataFrame()
+                    # ดึง Order ID
+                    oid = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ'])
+                    if oid is None: continue
+                    inc['order_id'] = oid
+                    
+                    # ดึงยอดเงิน (Settlement)
+                    settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ'])
+                    inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
+                    
+                    # ดึงค่า Affiliate
+                    aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น'])
+                    inc['affiliate'] = pd.to_numeric(aff, errors='coerce').fillna(0)
+                    
+                    # ดึงค่า Fee อื่นๆ (ถ้ามี)
+                    fee = get_col_data(df, ['Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม'])
+                    inc['fees'] = pd.to_numeric(fee, errors='coerce').fillna(0)
+                    
+                    # Clean ID
+                    inc['order_id'] = inc['order_id'].apply(clean_scientific_notation)
+                    
+                    income_dfs.append(inc)
+                except Exception as e:
+                    print(f"Error loading income {f['name']}: {e}")
+                    continue
+        
+        if income_dfs:
+            # รวมทุกไฟล์ Income และลบ ID ซ้ำ (เผื่อไฟล์ซ้ำ)
+            combined_inc = pd.concat(income_dfs, ignore_index=True)
+            # Group by Order ID เพื่อรวมยอด (กรณี 1 Order แตกหลายบรรทัดในไฟล์เงิน)
+            return combined_inc.groupby('order_id')[['settlement_amount', 'affiliate', 'fees']].sum().reset_index()
+        return pd.DataFrame()
+
+    # --- ส่วนที่ 2: โหลดข้อมูล Income เตรียมไว้ ---
+    income_master = load_tiktok_income(income_files)
+
+    # --- ส่วนที่ 3: อ่านไฟล์ Order ---
     all_orders = []
-    
     for f in order_files:
         if 'xlsx' in f['name'].lower() or 'xls' in f['name'].lower():
             try:
                 data = download_file(f['id'])
                 
-                # 1. ค้นหา Header Row แบบเข้มข้น (ต้องเจอทั้ง Order ID และ SKU ถึงจะยอมรับ)
-                # เพื่อป้องกันการไปอ่านบรรทัดที่เป็น Title หรือ Description
-                header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Quantity', 'Product Name'])
-                
-                # อ่านไฟล์ใหม่เริ่มจากบรรทัดที่หาเจอ
+                # สแกนหา Header (แก้ปัญหา SKU/Qty หาย)
+                header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Product Name'])
                 df = pd.read_excel(data, header=header_idx, dtype=str)
                 
                 extracted = pd.DataFrame()
                 
-                # 2. เริ่มดึงข้อมูล (ใช้รายชื่อคอลัมน์จากที่คุณให้มา + ภาษาไทย)
-                
                 # Order ID
                 oid = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
-                if oid is None: continue # ถ้าไม่มีเลข Order คือจบ ข้ามไฟล์นี้
+                if oid is None: continue
                 extracted['order_id'] = oid
 
                 # Status
-                status = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ', 'Status'])
+                status = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ'])
                 extracted['status'] = status if status is not None else 'สำเร็จ'
 
-                # SKU (Seller SKU)
-                sku = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID', 'SKU'])
+                # SKU
+                sku = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID'])
                 extracted['sku'] = sku if sku is not None else '-'
 
-                # Product Name
-                pname = get_col_data(df, ['Product Name', 'ชื่อสินค้า', 'Product'])
-                extracted['product_name'] = pname if pname is not None else '-'
-
-                # Quantity (ระวังเรื่อง Type)
+                # Quantity
                 qty = get_col_data(df, ['Quantity', 'จำนวน', 'Qty'])
                 extracted['quantity'] = pd.to_numeric(qty, errors='coerce').fillna(1) if qty is not None else 1
 
-                # Sales Amount (ยอดขาย - เน้นหา SKU Subtotal After Discount ตามที่คุณระบุ)
-                # ลำดับการหา: After Discount -> Order Amount -> Unit Price
-                sales = get_col_data(df, ['SKU Subtotal After Discount', 'ยอดรวม SKU หลังหักส่วนลด', 'Order Amount', 'ยอดคำสั่งซื้อ', 'Unit Price'])
+                # Sales Amount (ยอดขายจากฝั่ง Order)
+                sales = get_col_data(df, ['SKU Subtotal After Discount', 'Order Amount', 'ยอดคำสั่งซื้อ'])
                 extracted['sales_amount'] = pd.to_numeric(sales, errors='coerce').fillna(0) if sales is not None else 0
 
                 # Dates
-                c_date = get_col_data(df, ['Created Time', 'เวลาที่สร้าง', 'Order Creation Time'])
-                extracted['created_date'] = c_date
+                extracted['created_date'] = get_col_data(df, ['Created Time', 'เวลาที่สร้าง'])
+                extracted['shipped_date'] = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
                 
-                s_date = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
-                extracted['shipped_date'] = s_date
-
                 # Tracking
-                track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ', 'Tracking Number'])
+                track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ'])
                 extracted['tracking_id'] = track if track is not None else '-'
                 
-                # ค่าอื่นๆ ที่ไม่มีในไฟล์ Order ให้เป็น 0 (ต้องรอไฟล์ Income หรือคำนวณเอา)
-                extracted['settlement_amount'] = 0
-                extracted['fees'] = 0
-                extracted['affiliate'] = 0 # Affiliate ปกติไม่อยู่ในไฟล์ Order นี้
-                
+                # Product Name
+                pname = get_col_data(df, ['Product Name', 'ชื่อสินค้า'])
+                extracted['product_name'] = pname if pname is not None else '-'
+
                 # Metadata
                 extracted['shop_name'] = shop_name
                 extracted['platform'] = 'TIKTOK'
@@ -308,19 +311,33 @@ def process_tiktok(order_files, income_files, shop_name):
                 extracted['order_id'] = extracted['order_id'].apply(clean_scientific_notation)
                 extracted = clean_text(extracted, 'sku')
                 
-                # Check Data Validity: ถ้า Order ID เป็นค่าว่าง ให้ลบทิ้ง
-                extracted = extracted[extracted['order_id'].notna() & (extracted['order_id'] != '')]
-
                 all_orders.append(extracted)
 
             except Exception as e:
-                st.error(f"❌ TikTok {f['name']}: {e}")
+                st.error(f"❌ TikTok Order {f['name']}: {e}")
                 continue
 
     if not all_orders: 
         return pd.DataFrame()
         
-    return pd.concat(all_orders, ignore_index=True)
+    final_orders = pd.concat(all_orders, ignore_index=True)
+    
+    # --- ส่วนที่ 4: Merge ข้อมูลการเงินเข้ากับออเดอร์ ---
+    if not income_master.empty:
+        # Merge ด้วย Order ID
+        merged = pd.merge(final_orders, income_master, on='order_id', how='left')
+        
+        # แทนค่า NaN ด้วย 0
+        for col in ['settlement_amount', 'affiliate', 'fees']:
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(0)
+        return merged
+    else:
+        # ถ้าไม่มีไฟล์เงิน ก็ใส่ 0 ไปก่อน
+        final_orders['settlement_amount'] = 0
+        final_orders['affiliate'] = 0
+        final_orders['fees'] = 0
+        return final_orders
 
 def process_shopee(order_files, income_files, shop_name):
     all_orders = []
