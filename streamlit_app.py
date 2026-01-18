@@ -183,202 +183,113 @@ def load_cost_data():
 def process_tiktok(order_files, income_files, shop_name):
     all_orders = []
     
+    # ฟังก์ชันช่วยหาชื่อคอลัมน์ (รองรับทั้งไทย/อังกฤษ และตัดช่องว่าง)
+    def get_col_data(df, candidates):
+        # ทำให้ชื่อคอลัมน์ในไฟล์เป็นตัวพิมพ์เล็กและตัดช่องว่าง
+        cols_lower = [str(c).strip().lower() for c in df.columns]
+        
+        for cand in candidates:
+            cand_clean = cand.strip().lower()
+            if cand_clean in cols_lower:
+                # หา index ของคอลัมน์ที่ตรงกัน
+                idx = cols_lower.index(cand_clean)
+                real_col_name = df.columns[idx]
+                return df[real_col_name]
+        return None # ถ้าหาไม่เจอเลย
+
     # --- Orders TIKTOK ---
     for f in order_files:
-        if 'xlsx' in f['name'].lower():
+        if 'xlsx' in f['name'].lower() or 'xls' in f['name'].lower(): # รองรับทั้ง xls, xlsx
             try:
                 data = download_file(f['id'])
+                # TikTok บางที Header อยู่บรรทัดที่ 1 (index 0)
+                df = pd.read_excel(data, dtype=str)
                 
-                # *** เปลี่ยนการอ่านไฟล์: ใช้ header=0, skiprows=[1] ***
-                # header=0: ใช้แถวแรกเป็นชื่อคอลัมน์
-                # skiprows=[1]: ข้ามแถวที่ 2 (คำอธิบายภาษาไทย)
-                df = pd.read_excel(data, dtype=str, header=0, skiprows=[1])
-                df.columns = df.columns.str.strip()
-                
-                st.write(f"✅ กำลังประมวลผลไฟล์: {f['name']}")
-                st.write(f"📋 คอลัมน์ที่พบ: {list(df.columns)}")
-                
-                # ตรวจสอบว่าคอลัมน์ที่ต้องการมีอยู่จริง
-                required_cols = ['Order ID', 'Order Status', 'Seller SKU', 'Quantity', 
-                                'SKU Subtotal After Discount', 'Created Time', 
-                                'Shipped Time', 'Tracking ID', 'Product Name']
-                
-                # แปลงชื่อคอลัมน์ให้เป็น lowercase สำหรับการค้นหา
-                df_lower_cols = {col.lower().strip(): col for col in df.columns}
-                
-                # สร้าง extracted_data ด้วย mapping
+                # ถ้าไม่เจอ Order ID ลองอ่านใหม่อีกรอบโดยข้ามบรรทัด (เผื่อไฟล์มีหัวกระดาษ)
+                if 'Order ID' not in df.columns and 'หมายเลขคำสั่งซื้อ' not in df.columns:
+                     data.seek(0)
+                     df = pd.read_excel(data, header=1, dtype=str)
+
                 extracted_data = pd.DataFrame()
                 
-                # 1. order_id
-                order_id_keys = ['order id', 'orderid', 'order no', 'order no.']
-                order_id_col = None
-                for key in order_id_keys:
-                    if key in df_lower_cols:
-                        order_id_col = df_lower_cols[key]
-                        break
-                
-                if order_id_col:
-                    extracted_data['order_id'] = df[order_id_col]
+                # 1. Order ID (สำคัญสุด)
+                order_id_col = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
+                if order_id_col is not None:
+                    extracted_data['order_id'] = order_id_col
                 else:
-                    st.error(f"❌ ไม่พบคอลัมน์ Order ID ใน {f['name']}")
-                    st.write(f"คอลัมน์ที่มี: {list(df.columns)}")
-                    continue
-                
-                # 2. status
-                status_keys = ['order status', 'status']
-                status_col = None
-                for key in status_keys:
-                    if key in df_lower_cols:
-                        status_col = df_lower_cols[key]
-                        break
-                extracted_data['status'] = df[status_col] if status_col else 'สำเร็จ'
-                
-                # 3. sku
-                sku_keys = ['seller sku', 'sku', 'reference id', 'sku id']
-                sku_col = None
-                for key in sku_keys:
-                    if key in df_lower_cols:
-                        sku_col = df_lower_cols[key]
-                        break
-                extracted_data['sku'] = df[sku_col] if sku_col else '-'
-                
-                # 4. quantity
-                qty_keys = ['quantity', 'qty', 'sku quantity']
-                qty_col = None
-                for key in qty_keys:
-                    if key in df_lower_cols:
-                        qty_col = df_lower_cols[key]
-                        break
-                extracted_data['quantity'] = df[qty_col] if qty_col else 1
-                
-                # 5. sales_amount
-                sales_keys = ['sku subtotal after discount', 'unit price', 'original price', 'deal price']
-                sales_col = None
-                for key in sales_keys:
-                    if key in df_lower_cols:
-                        sales_col = df_lower_cols[key]
-                        break
-                extracted_data['sales_amount'] = df[sales_col] if sales_col else 0
-                
-                # 6. created_date
-                created_keys = ['created time', 'order time', 'created time']
-                created_col = None
-                for key in created_keys:
-                    if key in df_lower_cols:
-                        created_col = df_lower_cols[key]
-                        break
-                extracted_data['created_date'] = df[created_col] if created_col else None
-                
-                # 7. shipped_date
-                shipped_keys = ['shipped time', 'rts time']
-                shipped_col = None
-                for key in shipped_keys:
-                    if key in df_lower_cols:
-                        shipped_col = df_lower_cols[key]
-                        break
-                extracted_data['shipped_date'] = df[shipped_col] if shipped_col else None
-                
-                # 8. tracking_id
-                tracking_keys = ['tracking id', 'tracking no', 'waybill no']
-                tracking_col = None
-                for key in tracking_keys:
-                    if key in df_lower_cols:
-                        tracking_col = df_lower_cols[key]
-                        break
-                extracted_data['tracking_id'] = df[tracking_col] if tracking_col else '-'
-                
-                # 9. product_name
-                product_keys = ['product name', 'item name', 'product']
-                product_col = None
-                for key in product_keys:
-                    if key in df_lower_cols:
-                        product_col = df_lower_cols[key]
-                        break
-                extracted_data['product_name'] = df[product_col] if product_col else '-'
-                
+                    continue # ถ้าไม่มีเลข Order ก็ข้ามไปเลย
+
+                # 2. Status
+                status_col = get_col_data(df, ['Order Status', 'สถานะคำสั่งซื้อ', 'Status'])
+                extracted_data['status'] = status_col if status_col is not None else 'สำเร็จ'
+
+                # 3. SKU
+                sku_col = get_col_data(df, ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID', 'SKU'])
+                extracted_data['sku'] = sku_col if sku_col is not None else '-'
+
+                # 4. Quantity (แก้ปัญหา Quantity ไม่มา)
+                qty_col = get_col_data(df, ['Quantity', 'จำนวน', 'Qty'])
+                if qty_col is not None:
+                    extracted_data['quantity'] = pd.to_numeric(qty_col, errors='coerce').fillna(1)
+                else:
+                    extracted_data['quantity'] = 1
+
+                # 5. Sales Amount (ยอดขาย)
+                # ลำดับการหา: เอายอดหลังหักส่วนลดก่อน -> ถ้ายอดขายรวม -> ยอดปกติ
+                sale_col = get_col_data(df, ['SKU Subtotal After Discount', 'ยอดรวม SKU หลังหักส่วนลด', 'Order Amount', 'ยอดคำสั่งซื้อ', 'Unit Price'])
+                if sale_col is not None:
+                    extracted_data['sales_amount'] = pd.to_numeric(sale_col, errors='coerce').fillna(0)
+                else:
+                    extracted_data['sales_amount'] = 0
+
+                # 6. Created Date
+                create_col = get_col_data(df, ['Created Time', 'เวลาที่สร้าง', 'Order Creation Time'])
+                extracted_data['created_date'] = create_col
+
+                # 7. Shipped Date
+                ship_col = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
+                extracted_data['shipped_date'] = ship_col
+
+                # 8. Tracking ID (แก้ปัญหา Tracking ไม่มา)
+                track_col = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ', 'Tracking Number'])
+                extracted_data['tracking_id'] = track_col if track_col is not None else '-'
+
+                # 9. Product Name
+                prod_col = get_col_data(df, ['Product Name', 'ชื่อสินค้า', 'Product'])
+                extracted_data['product_name'] = prod_col if prod_col is not None else '-'
+
                 # ข้อมูลพื้นฐาน
                 extracted_data['shop_name'] = shop_name
                 extracted_data['platform'] = 'TIKTOK'
                 
-                # ทำความสะอาดข้อมูล
+                # CLEANING DATA
                 extracted_data = clean_date(extracted_data, 'created_date')
                 extracted_data = clean_date(extracted_data, 'shipped_date')
                 extracted_data['order_id'] = extracted_data['order_id'].apply(clean_scientific_notation)
                 extracted_data = clean_text(extracted_data, 'sku')
                 
-                # แปลงตัวเลข
-                extracted_data['quantity'] = pd.to_numeric(extracted_data['quantity'], errors='coerce').fillna(1)
-                extracted_data['sales_amount'] = pd.to_numeric(extracted_data['sales_amount'], errors='coerce').fillna(0)
-                
-                # Income ข้อมูล (ถ้าไม่มีจริงๆ ให้ใส่ 0)
+                # --- ส่วนสำคัญ: ข้อมูลทางการเงิน ---
+                # ไฟล์ Order ของ TikTok ไม่มีค่าธรรมเนียม/ต้นทุน/ยอดโอนที่แท้จริง (ต้องใช้ไฟล์ Settlement)
+                # ดังนั้นเบื้องต้นเราจะใส่ 0 ไว้ก่อน เพื่อไม่ให้ error ตอนคำนวณ
                 extracted_data['settlement_amount'] = 0
                 extracted_data['fees'] = 0
                 extracted_data['affiliate'] = 0
                 
-                st.write(f"✅ ดึงข้อมูล TikTok จาก {f['name']} สำเร็จ")
-                st.write(f"  - จำนวน: {len(extracted_data)} แถว")
-                st.write(f"  - order_id ตัวอย่าง: {extracted_data['order_id'].iloc[0] if len(extracted_data) > 0 else 'ไม่มีข้อมูล'}")
-                st.write(f"  - quantity มีค่าตั้งแต่ {extracted_data['quantity'].min()} ถึง {extracted_data['quantity'].max()}")
-                st.write(f"  - sales_amount รวม: {extracted_data['sales_amount'].sum():,.2f}")
-                
-                # แสดงตัวอย่างข้อมูล
-                if len(extracted_data) > 0:
-                    st.write("📝 ตัวอย่างข้อมูล 3 แถวแรก:")
-                    # ตรวจสอบว่าคอลัมน์ที่ต้องการมีอยู่ใน extracted_data หรือไม่
-                    sample_cols = ['order_id', 'sku', 'quantity', 'sales_amount', 'product_name']
-                    sample_cols = [col for col in sample_cols if col in extracted_data.columns]
-                    if sample_cols:
-                        sample_data = extracted_data.head(3)[sample_cols]
-                        st.write(sample_data)
-                    else:
-                        st.write("ไม่มีคอลัมน์ตัวอย่างที่ต้องการ")
-                
-                if not all_orders:
-                    st.warning("❌ ไม่พบข้อมูล TikTok Orders")
-                    return pd.DataFrame()
-    
-                st.write(f"จำนวนไฟล์ที่ประมวลผล: {len(all_orders)}")
-                st.write(f"ขนาดของแต่ละ DataFrame ใน all_orders: {[df.shape for df in all_orders]}")
-    
-                final = pd.concat(all_orders, ignore_index=True)
+                # (Optional) ถ้าไฟล์มีค่าธรรมเนียมระบุไว้ ให้ดึงมาใส่ (บาง Format มี)
+                fee_col = get_col_data(df, ['Payment platform discount', 'Shipping Fee Platform Discount'])
+                if fee_col is not None:
+                     extracted_data['fees'] = pd.to_numeric(fee_col, errors='coerce').fillna(0)
+
+                all_orders.append(extracted_data)
                 
             except Exception as e:
                 st.error(f"❌ ไฟล์ {f['name']}: {e}")
-                import traceback
-                st.write(traceback.format_exc())
                 continue
     
     if not all_orders:
-        st.warning("❌ ไม่พบข้อมูล TikTok Orders")
         return pd.DataFrame()
     
     final = pd.concat(all_orders, ignore_index=True)
-    
-    # ตรวจสอบข้อมูลสุดท้าย
-    st.write("🎯 สรุปข้อมูล TikTok ที่ได้:")
-    st.write(f"  - รวมทั้งหมด: {len(final)} แถว")
-    
-    # ตรวจสอบคอลัมน์สำคัญ
-    important_cols = ['order_id', 'quantity', 'sales_amount', 'tracking_id', 'product_name', 'created_date', 'shipped_date']
-    missing_cols = []
-    for col in important_cols:
-        if col in final.columns:
-            non_null_count = final[col].notnull().sum()
-            st.write(f"  - ✅ {col}: มีข้อมูล {non_null_count}/{len(final)} แถว")
-            if non_null_count == 0:
-                st.warning(f"    ⚠️ คอลัมน์ {col} ว่างเปล่าทั้งหมด!")
-        else:
-            missing_cols.append(col)
-            st.error(f"  - ❌ {col}: ไม่มีคอลัมน์นี้!")
-    
-    if missing_cols:
-        st.error(f"❌ ขาดคอลัมน์สำคัญ: {missing_cols}")
-    
-    # ถ้าไม่มีคอลัมน์สำคัญ ให้สร้างคอลัมน์ว่าง
-    for col in missing_cols:
-        if col not in final.columns:
-            final[col] = None
-    
     return final
 
 def process_shopee(order_files, income_files, shop_name):
