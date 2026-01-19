@@ -669,18 +669,65 @@ tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุป�
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
     
-    # 1. Load Data First (เพื่อเอา Shop Name มาทำ Filter)
+    # --- CSS: ปรับแต่ง Checkbox ให้ใหญ่และเด่น ---
+    st.markdown("""
+    <style>
+        /* ขยายขนาด Checkbox และ Label */
+        div[data-testid="stCheckbox"] label {
+            font-size: 1.2rem !important;
+            font-weight: bold !important;
+        }
+        div[data-testid="stCheckbox"] div[role="checkbox"] {
+            transform: scale(1.3); /* ขยายขนาดกล่องสี่เหลี่ยม */
+        }
+        /* ปรับระยะห่าง */
+        div.row-widget.stCheckbox {
+            margin-top: 5px;
+            padding: 5px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 1. Load Data
     raw_df = fetch_orders_data()
     ads_all = fetch_ads_data()
     
-    # หา Shop List ที่มีอยู่จริงในระบบ
+    # เตรียม Shop Name (ดึงทั้งหมดที่มีใน DB ออกมาโชว์ก่อน)
     available_shops = []
     if not raw_df.empty and 'shop_name' in raw_df.columns:
-        available_shops = sorted(raw_df['shop_name'].dropna().unique().tolist())
+        # ⚠️ แก้ปัญหาข้อ 2: แปลงเป็นตัวพิมพ์ใหญ่และตัดช่องว่าง ป้องกัน TikTok 1 vs TIKTOK 1
+        raw_df['shop_name'] = raw_df['shop_name'].astype(str).str.upper().str.strip()
+        available_shops = sorted(raw_df['shop_name'].unique().tolist())
     
-    # --- FILTERS UI ---
-    col_filters_1 = st.columns([1, 1, 2])
-    col_filters_2 = st.columns([1, 1, 1, 1])
+    # ถ้ายังไม่มีข้อมูลเลย ให้ใส่ค่า Default หลอกๆ ไว้กัน Error
+    if not available_shops:
+        available_shops = ["TIKTOK 1", "SHOPEE 1", "LAZADA 1"]
+
+    # --- SECTION: FILTER UI ---
+    
+    # 1. Shop Name Filter (แก้ปัญหาข้อ 4: ปุ่มเลือกทั้งหมดไปขวาสุด)
+    st.markdown("##### 🏪 เลือกร้านค้า (Shop Name)")
+    col_shop_input, col_shop_btn = st.columns([4, 1]) # แบ่งสัดส่วน 4:1
+    
+    with col_shop_btn:
+        st.write("") # ดันปุ่มลงมาให้ตรงกับช่อง Input
+        st.write("") 
+        if st.button("✅ เลือกทั้งหมด", use_container_width=True, help="กดเพื่อเลือกทุกร้านค้า"):
+            st.session_state.selected_shops = available_shops
+
+    with col_shop_input:
+        sel_shops = st.multiselect(
+            "รายชื่อร้านค้า", 
+            options=available_shops, 
+            default=available_shops, # Default เลือกทั้งหมด
+            key="selected_shops",
+            label_visibility="collapsed" # ซ่อน Label เพราะเขียนหัวข้อไว้ด้านบนแล้ว
+        )
+
+    st.markdown("---")
+
+    # 2. Date Filter
+    col_date_1, col_date_2, col_date_3, col_date_4 = st.columns(4)
 
     if "d_start" not in st.session_state:
         st.session_state.d_start = today.replace(day=1)
@@ -695,70 +742,73 @@ with tab_dash:
             st.session_state.d_end = date(y, m_idx, days)
         except: pass
 
-    # Filter Row 1: Shop Selection
-    with col_filters_1[0]:
-        st.markdown("**เลือกร้านค้า (Shop Name)**")
-    with col_filters_1[1]:
-        # ปุ่ม Select All Shops
-        if st.button("เลือกทั้งหมด", use_container_width=True):
-            st.session_state.selected_shops = available_shops
-    with col_filters_1[2]:
-        sel_shops = st.multiselect(
-            "รายชื่อร้านค้า", 
-            options=available_shops, 
-            default=available_shops, # Default เลือกทั้งหมด
-            key="selected_shops",
-            label_visibility="collapsed"
-        )
+    with col_date_1: st.selectbox("ปี", [2024, 2025, 2026], index=1, key="sel_year", on_change=update_dates)
+    with col_date_2: st.selectbox("เดือน", thai_months, index=today.month-1, key="sel_month", on_change=update_dates)
+    with col_date_3: st.session_state.d_start = st.date_input("📅 วันที่เริ่ม", st.session_state.d_start)
+    with col_date_4: st.session_state.d_end = st.date_input("📅 ถึงวันที่", st.session_state.d_end)
 
-    # Filter Row 2: Date & Platform
-    with col_filters_2[0]: st.selectbox("ปี", [2024, 2025, 2026], index=1, key="sel_year", on_change=update_dates)
-    with col_filters_2[1]: st.selectbox("เดือน", thai_months, index=today.month-1, key="sel_month", on_change=update_dates)
-    with col_filters_2[2]: st.session_state.d_start = st.date_input("วันที่เริ่ม", st.session_state.d_start)
-    with col_filters_2[3]: st.session_state.d_end = st.date_input("ถึงวันที่", st.session_state.d_end)
+    # 3. Platform Checkboxes (แก้ปัญหาข้อ 3: Big & Distinct)
+    st.write("")
+    st.markdown("##### 🛒 แพลตฟอร์ม (Platforms)")
+    
+    # ใช้ Columns จัดเรียงให้สวยงาม
+    cp_all, cp_tt, cp_sp, cp_lz = st.columns(4)
+    
+    sel_plats = []
+    
+    with cp_all: 
+        all_plat = st.checkbox("✅ ทุก Platform", value=True)
+    
+    # Logic: ถ้าเลือก All ให้เอาหมด, ถ้าไม่เลือก All ให้ดูรายตัว
+    is_tt = True if all_plat else False
+    is_sp = True if all_plat else False
+    is_lz = True if all_plat else False
 
-    # Platform Checkbox (Optional filter)
-    cp1, cp2, cp3, cp4 = st.columns(4)
-    with cp1: all_plat = st.checkbox("✅ ทุก Platform", value=True)
-    sel_plats = ['TIKTOK', 'SHOPEE', 'LAZADA'] if all_plat else []
+    # ถ้าไม่ได้ติ๊ก All ให้เปิดให้ติ๊กแยก
     if not all_plat:
-        with cp2: 
-            if st.checkbox("Tiktok", value=False): sel_plats.append('TIKTOK')
-        with cp3: 
-            if st.checkbox("Shopee", value=False): sel_plats.append('SHOPEE')
-        with cp4: 
-            if st.checkbox("Lazada", value=False): sel_plats.append('LAZADA')
+        with cp_tt: is_tt = st.checkbox("🖤 TIKTOK", value=False)
+        with cp_sp: is_sp = st.checkbox("🧡 SHOPEE", value=False)
+        with cp_lz: is_lz = st.checkbox("💙 LAZADA", value=False)
+    else:
+        # โชว์แบบ Disabled (ติ๊กถูกค้างไว้) เพื่อความสวยงามและสื่อว่าเลือกหมด
+        with cp_tt: st.checkbox("🖤 TIKTOK", value=True, disabled=True)
+        with cp_sp: st.checkbox("🧡 SHOPEE", value=True, disabled=True)
+        with cp_lz: st.checkbox("💙 LAZADA", value=True, disabled=True)
 
-    # Data Processing with Cache
+    # รวบรวม Platform ที่ถูกเลือก
+    if is_tt: sel_plats.append('TIKTOK')
+    if is_sp: sel_plats.append('SHOPEE')
+    if is_lz: sel_plats.append('LAZADA')
+
+    # --- PROCESS DATA ---
     try:
-        # A. เตรียมข้อมูล Ads (ต้อง Filter ตามร้านที่เลือก และรวมยอดตามวันที่)
+        # A. เตรียมข้อมูล Ads
         ads_grouped = pd.DataFrame()
         
         if not ads_all.empty:
             ads_temp = ads_all.copy()
             ads_temp['date'] = pd.to_datetime(ads_temp['date']).dt.date
             
-            # Filter Ads ตามช่วงเวลา และ ตาม Shop Name
+            # Filter Ads
             mask_ads = (ads_temp['date'] >= st.session_state.d_start) & \
                        (ads_temp['date'] <= st.session_state.d_end)
             
-            if 'shop_name' in ads_temp.columns:
+            if 'shop_name' in ads_temp.columns and sel_shops:
+                # แปลง shop_name ใน Ads ให้เป็นตัวใหญ่ด้วยเพื่อความชัวร์
+                ads_temp['shop_name'] = ads_temp['shop_name'].astype(str).str.upper().str.strip()
                 mask_ads &= ads_temp['shop_name'].isin(sel_shops)
             
             ads_filtered = ads_temp[mask_ads].copy()
             
-            # แปลงตัวเลข
             ads_filtered['ads_amount'] = pd.to_numeric(ads_filtered['ads_amount'], errors='coerce').fillna(0)
             ads_filtered['roas_ads'] = pd.to_numeric(ads_filtered['roas_ads'], errors='coerce').fillna(0)
             
-            # รวมยอด Ads ของหลายร้านเข้าด้วยกันในวันเดียว
-            # หมายเหตุ: ROAS เอามาบวกกันไม่ได้ ต้องหาค่าเฉลี่ย หรือคำนวณใหม่จากยอดขายรวม/adsรวม
-            # ในที่นี้ขอใช้ sum ของ ads_amount ส่วน roas_ads ใช้ค่าเฉลี่ย
             ads_grouped = ads_filtered.groupby('date').agg(
                 manual_ads=('ads_amount', 'sum'),
                 manual_roas=('roas_ads', 'mean') 
             ).reset_index().rename(columns={'date': 'created_date'})
-        
+
+        # B. เตรียมข้อมูล Orders
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
             
@@ -767,9 +817,11 @@ with tab_dash:
                    (raw_df['created_date'] <= st.session_state.d_end)
             
             if 'platform' in raw_df.columns: 
+                # แปลง Platform เป็นตัวใหญ่ แล้วเทียบกับ sel_plats
                 mask &= raw_df['platform'].str.upper().isin(sel_plats)
             
             if 'shop_name' in raw_df.columns and sel_shops:
+                # Shop Name ถูกแปลงเป็น Upper ตั้งแต่บรรทัดโหลดข้อมูลแล้ว
                 mask &= raw_df['shop_name'].isin(sel_shops)
                 
             df = raw_df.loc[mask].copy()
@@ -778,7 +830,7 @@ with tab_dash:
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-            # Generate Date Range
+            # Generate Date Range for Table
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
             
@@ -794,10 +846,9 @@ with tab_dash:
                 affiliate_sum=('affiliate', 'sum')
             ).reset_index()
             
-            # Merge 1: Date master
+            # Merge Everything
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
-            # Merge 2: Ads Data
             if not ads_grouped.empty:
                 final_df = pd.merge(step1, ads_grouped, on='created_date', how='left').fillna(0)
             else:
@@ -805,20 +856,20 @@ with tab_dash:
                 final_df['manual_ads'] = 0
                 final_df['manual_roas'] = 0
 
-            # C. คำนวณ
+            # C. Calculations (สูตรคำนวณ)
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
             calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
             
-            def safe_div(a, b): return (a/b*100) if b > 0 else 0
-            
             calc['ROAS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
             calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
-            # ... HTML Table Code (Same as before) ...
+            # --- D. HTML RENDER ---
+            # (ส่วน CSS และ HTML Table ยังคงเดิมตามที่เคยให้ไป ใส่ไว้ครบถ้วนด้านล่างนี้)
+            
             st.markdown("""
             <style>
                 table.report-table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -878,6 +929,8 @@ with tab_dash:
                 if is_percent: s_val = f"{val:.1f}%"
                 if val < 0: return f'<span class="text-red">{s_val}</span>'
                 return s_val
+            
+            def safe_div(a, b): return (a/b*100) if b > 0 else 0
 
             max_profit = calc['กำไรสุทธิ'].max()
             if max_profit <= 0: max_profit = 1
@@ -976,7 +1029,7 @@ with tab_dash:
 
             html_parts.append("</tbody></table></div>")
             st.markdown("".join(html_parts), unsafe_allow_html=True)
-            
+
         else: st.info("ไม่พบข้อมูลในช่วงเวลานี้")
     except Exception as e: st.error(f"Error Processing: {e}")
 
