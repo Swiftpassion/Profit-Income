@@ -188,12 +188,25 @@ def get_standard_status(row):
 # ใช้ @st.cache_data เพื่อดึงข้อมูลแล้วเก็บใน RAM 
 # การกดเปลี่ยนวันที่ในหน้าเว็บจะไม่ไปยิง Database ใหม่ แต่จะดึงจาก cache นี้
 
-@st.cache_data(ttl=3600)  # Cache 1 ชั่วโมง
+@st.cache_data(ttl=3600)  # <--- แก้เลขตรงนี้เป็น 3600 (หน่วยเป็นวินาที = 60 นาที)
 def fetch_orders_data():
     """ดึงข้อมูล Orders ทั้งหมดจาก Supabase (Cached)"""
     try:
-        # ใช้ .range(0, 50000) เพื่อแก้ปัญหา 1000 row limit
-        res = supabase.table("orders").select("*").range(0, 50000).execute()
+        # แปลงวันที่เป็น String format ที่ Database เข้าใจ
+        # หมายเหตุ: การใช้ st.session_state ใน cache function โดยตรง
+        # อาจทำให้ cache ไม่ update ตามวันที่ ถ้าจะให้ชัวร์ควรส่งวันที่เข้ามาเป็น parameter
+        # แต่ถ้าใช้แบบเดิม ให้มั่นใจว่ากดปุ่ม Sync แล้วจะเคลียร์ cache
+        
+        if 'd_start' not in st.session_state: return pd.DataFrame()
+        
+        start_str = st.session_state.d_start.strftime('%Y-%m-%d')
+        end_str = st.session_state.d_end.strftime('%Y-%m-%d')
+        
+        # สั่งให้ Supabase ส่งมาเฉพาะช่วงวันที่ที่เลือก
+        res = supabase.table("orders").select("*") \
+            .gte("created_date", start_str) \
+            .lte("created_date", end_str) \
+            .execute()
         return pd.DataFrame(res.data)
     except Exception as e:
         st.error(f"Error fetching orders: {e}")
@@ -620,11 +633,28 @@ with st.sidebar:
                     for i in range(0, len(clean_records), chunk_size):
                         supabase.table("orders").insert(clean_records[i:i+chunk_size]).execute()
                     
-                    # *** CLEAR CACHE AFTER SYNC ***
-                    fetch_orders_data.clear()
+                    # ---------------------------------------------------------
+                    # [ใส่โค้ดตรงนี้] สั่งล้าง Cache ทั้งหมดเพื่อให้ดึงข้อมูลใหม่ทันที
+                    # ---------------------------------------------------------
+                    fetch_orders_data.clear()  # ล้าง Cache ออเดอร์
+                    fetch_ads_data.clear()     # ล้าง Cache โฆษณา (เผื่อไว้)
+                    load_cost_data.clear()     # ล้าง Cache ต้นทุน (เผื่อไว้)
                     
                     status_box.success(f"✅ Sync สำเร็จ! ({len(master_df)} รายการ)")
                     st.rerun()
+    # ---------------------------------------------------------------------
+    # 👇 วางโค้ดปุ่มรีเฟรชตรงนี้ (ระวังย่อหน้าต้องตรงกับ if start_sync ด้านบน)
+    # ---------------------------------------------------------------------                
+    st.write("") # เว้นบรรทัดนิดนึงให้สวยงาม
+        if st.button("🔄 รีเฟรชข้อมูล (โหลดใหม่จาก Database)", use_container_width=True):
+            # สั่งล้าง Cache
+            fetch_orders_data.clear()
+            fetch_ads_data.clear()
+            load_cost_data.clear()
+            
+            # รีโหลดหน้าจอ
+            st.success("รีเฟรชข้อมูลเรียบร้อย!")
+            st.rerun()
 
 # ==========================================
 # MAIN CONTENT
@@ -637,8 +667,20 @@ tab_dash, tab_details, tab_ads, tab_cost, tab_old = st.tabs(["📊 สรุป�
 # --- TAB 1: DASHBOARD (HTML Table) ---
 with tab_dash:
     st.header("📊 สรุปยอดขายทุกแพลตฟอร์ม")
-    col_filters = st.columns([1, 1, 1, 1])
     
+    # 1. Load Data First (เพื่อเอา Shop Name มาทำ Filter)
+    raw_df = fetch_orders_data()
+    ads_all = fetch_ads_data()
+    
+    # หา Shop List ที่มีอยู่จริงในระบบ
+    available_shops = []
+    if not raw_df.empty and 'shop_name' in raw_df.columns:
+        available_shops = sorted(raw_df['shop_name'].dropna().unique().tolist())
+    
+    # --- FILTERS UI ---
+    col_filters_1 = st.columns([1, 1, 2])
+    col_filters_2 = st.columns([1, 1, 1, 1])
+
     if "d_start" not in st.session_state:
         st.session_state.d_start = today.replace(day=1)
         st.session_state.d_end = today
@@ -652,57 +694,94 @@ with tab_dash:
             st.session_state.d_end = date(y, m_idx, days)
         except: pass
 
-    with col_filters[0]: st.selectbox("ปี", [2024, 2025, 2026], index=1, key="sel_year", on_change=update_dates)
-    with col_filters[1]: st.selectbox("เดือน", thai_months, index=today.month-1, key="sel_month", on_change=update_dates)
-    with col_filters[2]: st.session_state.d_start = st.date_input("วันที่เริ่ม", st.session_state.d_start)
-    with col_filters[3]: st.session_state.d_end = st.date_input("ถึงวันที่", st.session_state.d_end)
+    # Filter Row 1: Shop Selection
+    with col_filters_1[0]:
+        st.markdown("**เลือกร้านค้า (Shop Name)**")
+    with col_filters_1[1]:
+        # ปุ่ม Select All Shops
+        if st.button("เลือกทั้งหมด", use_container_width=True):
+            st.session_state.selected_shops = available_shops
+    with col_filters_1[2]:
+        sel_shops = st.multiselect(
+            "รายชื่อร้านค้า", 
+            options=available_shops, 
+            default=available_shops, # Default เลือกทั้งหมด
+            key="selected_shops",
+            label_visibility="collapsed"
+        )
 
-    cp1, cp2, cp3, cp4, cp5 = st.columns([1, 1, 1, 1, 6])
-    with cp1: all_plat = st.checkbox("✅ ทั้งหมด", value=True)
-    with cp2: tiktok_check = st.checkbox("✅ Tiktok", value=all_plat, disabled=all_plat)
-    with cp3: shopee_check = st.checkbox("✅ Shopee", value=all_plat, disabled=all_plat)
-    with cp4: lazada_check = st.checkbox("✅ Lazada", value=all_plat, disabled=all_plat)
+    # Filter Row 2: Date & Platform
+    with col_filters_2[0]: st.selectbox("ปี", [2024, 2025, 2026], index=1, key="sel_year", on_change=update_dates)
+    with col_filters_2[1]: st.selectbox("เดือน", thai_months, index=today.month-1, key="sel_month", on_change=update_dates)
+    with col_filters_2[2]: st.session_state.d_start = st.date_input("วันที่เริ่ม", st.session_state.d_start)
+    with col_filters_2[3]: st.session_state.d_end = st.date_input("ถึงวันที่", st.session_state.d_end)
 
+    # Platform Checkbox (Optional filter)
+    cp1, cp2, cp3, cp4 = st.columns(4)
+    with cp1: all_plat = st.checkbox("✅ ทุก Platform", value=True)
     sel_plats = ['TIKTOK', 'SHOPEE', 'LAZADA'] if all_plat else []
     if not all_plat:
-        if tiktok_check: sel_plats.append('TIKTOK')
-        if shopee_check: sel_plats.append('SHOPEE')
-        if lazada_check: sel_plats.append('LAZADA')
+        with cp2: 
+            if st.checkbox("Tiktok", value=False): sel_plats.append('TIKTOK')
+        with cp3: 
+            if st.checkbox("Shopee", value=False): sel_plats.append('SHOPEE')
+        with cp4: 
+            if st.checkbox("Lazada", value=False): sel_plats.append('LAZADA')
 
     # Data Processing with Cache
     try:
-        # A. ดึงข้อมูลออเดอร์ (Cached)
-        raw_df = fetch_orders_data()
-        
-        # B. ดึงข้อมูลค่าโฆษณา (Cached)
-        ads_all = fetch_ads_data()
-        ads_db = pd.DataFrame()
+        # A. เตรียมข้อมูล Ads (ต้อง Filter ตามร้านที่เลือก และรวมยอดตามวันที่)
+        ads_grouped = pd.DataFrame()
         
         if not ads_all.empty:
-            # Filter ads data in memory (faster than DB query)
-            ads_all['date'] = pd.to_datetime(ads_all['date']).dt.date
-            mask_ads = (ads_all['date'] >= st.session_state.d_start) & (ads_all['date'] <= st.session_state.d_end)
-            ads_temp = ads_all[mask_ads].copy()
+            ads_temp = ads_all.copy()
+            ads_temp['date'] = pd.to_datetime(ads_temp['date']).dt.date
             
-            if not ads_temp.empty:
-                ads_db = ads_temp.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
-                ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
-                ads_db['manual_roas'] = pd.to_numeric(ads_db['manual_roas'], errors='coerce').fillna(0)
-                ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']]
-
-        # C. ประมวลผล
+            # Filter Ads ตามช่วงเวลา และ ตาม Shop Name
+            mask_ads = (ads_temp['date'] >= st.session_state.d_start) & \
+                       (ads_temp['date'] <= st.session_state.d_end)
+            
+            if 'shop_name' in ads_temp.columns:
+                mask_ads &= ads_temp['shop_name'].isin(sel_shops)
+            
+            ads_filtered = ads_temp[mask_ads].copy()
+            
+            # แปลงตัวเลข
+            ads_filtered['ads_amount'] = pd.to_numeric(ads_filtered['ads_amount'], errors='coerce').fillna(0)
+            ads_filtered['roas_ads'] = pd.to_numeric(ads_filtered['roas_ads'], errors='coerce').fillna(0)
+            
+            # รวมยอด Ads ของหลายร้านเข้าด้วยกันในวันเดียว
+            # หมายเหตุ: ROAS เอามาบวกกันไม่ได้ ต้องหาค่าเฉลี่ย หรือคำนวณใหม่จากยอดขายรวม/adsรวม
+            # ในที่นี้ขอใช้ sum ของ ads_amount ส่วน roas_ads ใช้ค่าเฉลี่ย
+            ads_grouped = ads_filtered.groupby('date').agg(
+                manual_ads=('ads_amount', 'sum'),
+                manual_roas=('roas_ads', 'mean') 
+            ).reset_index().rename(columns={'date': 'created_date'})
+        
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
-            mask = (raw_df['created_date'] >= st.session_state.d_start) & (raw_df['created_date'] <= st.session_state.d_end)
-            if 'platform' in raw_df.columns: mask &= raw_df['platform'].str.upper().isin(sel_plats)
+            
+            # Filter: Date + Platform + Shop Name
+            mask = (raw_df['created_date'] >= st.session_state.d_start) & \
+                   (raw_df['created_date'] <= st.session_state.d_end)
+            
+            if 'platform' in raw_df.columns: 
+                mask &= raw_df['platform'].str.upper().isin(sel_plats)
+            
+            if 'shop_name' in raw_df.columns and sel_shops:
+                mask &= raw_df['shop_name'].isin(sel_shops)
+                
             df = raw_df.loc[mask].copy()
 
+            # Convert Numbers
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
+            # Generate Date Range
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
             
+            # Group by Date
             daily = df.groupby('created_date').agg(
                 success_count=('status', lambda x: (x == 'ออเดอร์สำเร็จ').sum()),
                 pending_count=('status', lambda x: (x == 'รอดำเนินการ').sum()),
@@ -714,16 +793,18 @@ with tab_dash:
                 affiliate_sum=('affiliate', 'sum')
             ).reset_index()
             
+            # Merge 1: Date master
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
-            if not ads_db.empty:
-                final_df = pd.merge(step1, ads_db, on='created_date', how='left').fillna(0)
+            # Merge 2: Ads Data
+            if not ads_grouped.empty:
+                final_df = pd.merge(step1, ads_grouped, on='created_date', how='left').fillna(0)
             else:
                 final_df = step1.copy()
                 final_df['manual_ads'] = 0
                 final_df['manual_roas'] = 0
 
-            # D. คำนวณ
+            # C. คำนวณ
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
@@ -1036,10 +1117,26 @@ with tab_details:
 # ... (Tab ADS, Cost, Old ยังคงเหมือนเดิม) ...
 with tab_ads:
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
+    # 1. Fetch Orders to get unique Shop Names
+    raw_orders = fetch_orders_data()
+    shop_list = []
+    if not raw_orders.empty and 'shop_name' in raw_orders.columns:
+        shop_list = sorted(raw_orders['shop_name'].dropna().unique().tolist())
+    
+    if not shop_list:
+        st.warning("⚠️ ไม่พบรายชื่อร้านค้า (กรุณา Sync ข้อมูล Order ก่อน)")
+        shop_list = ["TIKTOK 1", "SHOPEE 1"] # Default fallback
+
+    # 2. Filters UI
     col_filters_ads = st.columns([1, 1, 1, 1])
+    
     with col_filters_ads[0]: 
-        sel_year_ads = st.selectbox("ปี", [2024, 2025, 2026], index=1, key="ads_year")
+        selected_shop_ads = st.selectbox("เลือกร้านค้าที่จะบันทึก", shop_list, key="ads_shop_select")
+        
     with col_filters_ads[1]: 
+        sel_year_ads = st.selectbox("ปี", [2024, 2025, 2026], index=1, key="ads_year")
+        
+    with col_filters_ads[2]: 
         sel_month_ads = st.selectbox("เดือน", thai_months, index=today.month-1, key="ads_month")
     
     try:
@@ -1050,50 +1147,93 @@ with tab_ads:
     except:
         d_start_ads = today.replace(day=1); d_end_ads = today
 
-    with col_filters_ads[2]: d_start_ads = st.date_input("วันที่เริ่ม", d_start_ads, key="ads_d_start")
-    with col_filters_ads[3]: d_end_ads = st.date_input("ถึงวันที่", d_end_ads, key="ads_d_end")
+    with col_filters_ads[3]: 
+        # แสดงวันที่ให้ดูเฉยๆ หรือปรับได้ถ้าต้องการ
+        st.text_input("ช่วงวันที่", f"{d_start_ads} - {d_end_ads}", disabled=True)
 
+    # 3. Load Existing Ads Data for specific shop
     try:
-        # Use cached fetch for initial check if needed, but for filtering within date range, querying is okay for small datasets
-        # But we can optimize to fetch all and filter in Pandas
         ads_all = fetch_ads_data()
         db_ads = pd.DataFrame()
+        
         if not ads_all.empty:
             ads_all['date'] = pd.to_datetime(ads_all['date']).dt.date
+            
+            # Filter: Date Range AND Shop Name
             mask_ads = (ads_all['date'] >= d_start_ads) & (ads_all['date'] <= d_end_ads)
+            
+            if 'shop_name' in ads_all.columns:
+                mask_ads &= (ads_all['shop_name'] == selected_shop_ads)
+                
             db_ads = ads_all[mask_ads].set_index('date')
-    except: db_ads = pd.DataFrame()
+            
+    except Exception as e:
+        st.error(f"Error loading ads: {e}")
+        db_ads = pd.DataFrame()
 
+    # 4. Prepare Editor Data
     date_range_ads = pd.date_range(start=d_start_ads, end=d_end_ads)
     editor_data = []
+    
     for d in date_range_ads:
         d_date = d.date()
-        current_ads = 0.0; current_roas = 0.0
+        current_ads = 0.0
+        current_roas = 0.0
+        
         if not db_ads.empty and d_date in db_ads.index:
             current_ads = float(db_ads.loc[d_date, 'ads_amount'])
             current_roas = float(db_ads.loc[d_date, 'roas_ads'])
-        editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS ADS': current_roas})
+            
+        editor_data.append({
+            'วันที่': d_date, 
+            'ค่า ADS': current_ads, 
+            'ROAS ADS': current_roas
+        })
 
     st.markdown("---")
     col_btn, col_info = st.columns([2, 5])
     with col_btn:
-        save_ads_clicked = st.button("💾 บันทึกข้อมูลค่า ADS", type="primary", use_container_width=True)
-    with col_info:
-        st.info(f"📅 ช่วงวันที่: {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
-
-    st.markdown("##### 📝 กรอกข้อมูลลงในตารางด้านล่าง")
-    edited_df = st.data_editor(pd.DataFrame(editor_data), column_config={"วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True), "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100), "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)}, hide_index=True, num_rows="fixed", use_container_width=True, height=1200, key="ads_editor_tab")
+        save_ads_clicked = st.button(f"💾 บันทึกข้อมูล ({selected_shop_ads})", type="primary", use_container_width=True)
+    
+    st.markdown(f"##### 📝 กรอกค่าโฆษณาสำหรับ: **{selected_shop_ads}**")
+    
+    edited_df = st.data_editor(
+        pd.DataFrame(editor_data), 
+        column_config={
+            "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True), 
+            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100), 
+            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)
+        }, 
+        hide_index=True, 
+        num_rows="fixed", 
+        use_container_width=True, 
+        height=600, 
+        key="ads_editor_tab"
+    )
 
     if save_ads_clicked:
         upsert_data = []
         for _, row in edited_df.iterrows():
-            upsert_data.append({"date": str(row['วันที่']), "ads_amount": row['ค่า ADS'], "roas_ads": row['ROAS ADS']})
+            # ข้อมูลที่จะบันทึก ต้องมี shop_name ด้วย
+            upsert_data.append({
+                "date": str(row['วันที่']), 
+                "ads_amount": row['ค่า ADS'], 
+                "roas_ads": row['ROAS ADS'],
+                "shop_name": selected_shop_ads  # <-- สำคัญ: ใส่ Shop Name ไปด้วย
+            })
+            
         try:
+            # ใช้ on_conflict เพื่อระบุว่าถ้า date+shop_name ซ้ำ ให้ update
+            # หมายเหตุ: ใน Supabase ต้องตั้งค่า constraints ให้ถูก หรือมี primary key เป็น (date, shop_name)
             supabase.table("daily_ads").upsert(upsert_data).execute()
-            # Clear cache to reflect updates
+            
+            # Clear cache
             fetch_ads_data.clear()
-            st.toast("✅ บันทึกข้อมูลเรียบร้อยแล้ว!", icon="💾")
-        except Exception as e: st.error(f"เกิดข้อผิดพลาด: {e}")
+            st.toast(f"✅ บันทึกข้อมูลของ {selected_shop_ads} เรียบร้อยแล้ว!", icon="💾")
+            
+        except Exception as e: 
+            st.error(f"เกิดข้อผิดพลาดในการบันทึก: {e}")
+            st.caption("คำแนะนำ: โปรดตรวจสอบว่าตาราง daily_ads ใน Database มีคอลัมน์ 'shop_name' แล้วหรือไม่")
 
 with tab_cost:
     st.subheader("💰 จัดการต้นทุน")
