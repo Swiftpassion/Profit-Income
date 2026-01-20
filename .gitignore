@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Data (Private/Local)
+data/
+pgdata/
+
+# Docker
+# Keep docker-compose.yml as it is needed to run the app
+
+# Debug files
+debug_output.txt
+debug_output_income.txt
+debug_tiktok_data.py

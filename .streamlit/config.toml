@@ -1,0 +1,12 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#FF4B4B"
+font = "sans serif"
