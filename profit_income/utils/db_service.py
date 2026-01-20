@@ -6,7 +6,14 @@ import os
 
 # Database Connection URL
 # Using localhost because Streamlit runs on host, Postgres in Docker exposes port 5432
-DB_URL = "postgresql://admin:mos2025@localhost:5432/profit_income"
+try:
+    import streamlit as st
+    if "db_url" in st.secrets:
+        DB_URL = st.secrets["db_url"]
+    else:
+        DB_URL = os.getenv("DB_URL", "postgresql://admin:mos2025@localhost:5432/profit_income")
+except:
+    DB_URL = os.getenv("DB_URL", "postgresql://admin:mos2025@localhost:5432/profit_income")
 
 def get_engine():
     """Create and return a SQLAlchemy engine."""

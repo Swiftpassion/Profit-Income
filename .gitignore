@@ -8,6 +8,8 @@ env/
 
 # Streamlit
 .streamlit/secrets.toml
+stock_jst/.streamlit/secrets.toml
+shop_dashboard/.streamlit/secrets.toml
 
 # IDE
 .vscode/
