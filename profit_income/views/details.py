@@ -1,0 +1,137 @@
+import streamlit as st
+import pandas as pd
+from utils.db_service import fetch_orders
+from utils.common import format_thai_date
+
+def render_details():
+    st.header("📦 รายละเอียดออเดอร์แยกรายสินค้า")
+    sub_plat_list = ["TIKTOK", "SHOPEE", "LAZADA"]
+    selected_platform = st.radio("เลือกแพลตฟอร์ม", sub_plat_list, horizontal=True)
+    st.markdown("---")
+    
+    col_d1, col_d2 = st.columns(2)
+    with col_d1: d_start_det = st.date_input("เริ่มวันที่", st.session_state.d_start, key="det_start")
+    with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
+
+    try:
+        # Use cached function
+        raw_df = fetch_orders()
+        
+        if not raw_df.empty:
+            raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
+            st.info(f"Raw Query = {len(raw_df)}")
+            mask = (raw_df['created_date'] >= d_start_det) & \
+                   (raw_df['created_date'] <= d_end_det) & \
+                   (raw_df['platform'] == selected_platform)
+            df = raw_df.loc[mask].copy()
+            
+            if df.empty:
+                st.info(f"ไม่พบข้อมูล {selected_platform} ในช่วงวันที่เลือก")
+            else:
+                for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount', 'unit_cost']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                
+                df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
+                
+                h_blue = "#1e3c72"; h_cyan = "#22b8e6"; h_green = "#27ae60"
+                html = f"""
+                <table style="width:100%; border-collapse: collapse; font-size: 13px; color: white;">
+                    <thead>
+                        <tr>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">วันที่ทำการสั่งซื้อ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">เลขคำสั่งซื้อ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ชื่อสินค้า</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">รหัสสินค้า</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ยอดขาย</th>
+                            <th style="background-color: {h_cyan}; padding: 8px; border: 1px solid #444;">ทุน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ทุน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าธรรมเนียม</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าธรรมเนียม</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าแอฟฟิลิเอต</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าแอฟฟิลิเอต</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ค่าดำเนินการ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">%ค่าดำเนินการ</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">วันที่ได้รับเงิน</th>
+                            <th style="background-color: {h_blue}; padding: 8px; border: 1px solid #444;">ยอดเงินที่ได้รับจริง</th>
+                            <th style="background-color: {h_green}; padding: 8px; border: 1px solid #444;">กำไรสุทธิ</th>
+                            <th style="background-color: {h_green}; padding: 8px; border: 1px solid #444;">%กำไรสุทธิ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+                grouped = df.groupby('order_id', sort=False)
+                row_counter = 0
+                def fmt_num(val, color_neg=True):
+                    s = f"{val:,.2f}"
+                    if color_neg and val < 0: return f'<span class="text-red">{s}</span>'
+                    return s
+                def fmt_pct(num, div):
+                    if div == 0: return "0.0%"
+                    val = (num/div) * 100
+                    return f"{val:,.1f}%"
+
+                sum_sales = 0; sum_net_profit = 0
+                for order_id, group in grouped:
+                    row_counter += 1
+                    bg_color = "#1c1c1c" if row_counter % 2 != 0 else "#262626"
+                    hover_color = "#333333"
+                    
+                    order_sales = group['sales_amount'].sum()
+                    order_fees = group['fees'].sum()
+                    order_aff = group['affiliate'].sum()
+                    order_settle = group['settlement_amount'].sum()
+                    order_cost_total = group['total_cost'].sum()
+                    ops_cost = 10.0
+                    order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
+                    sum_sales += order_sales; sum_net_profit += order_net_profit
+
+                    created_date_str = format_thai_date(group.iloc[0]['created_date'])
+                    settle_date_str = format_thai_date(group.iloc[0]['settlement_date']) if group.iloc[0]['settlement_date'] else "-"
+                    num_items = len(group)
+                    
+                    for i, (idx, row) in enumerate(group.iterrows()):
+                        html += f'<tr style="background-color: {bg_color};" onmouseover="this.style.backgroundColor=\'{hover_color}\'" onmouseout="this.style.backgroundColor=\'{bg_color}\'">'
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{created_date_str}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center; vertical-align:middle;">{order_id}</td>'
+                        
+                        prod_name = row.get('product_name', '-')
+                        sku = row.get('sku', '-')
+                        unit_cost = row.get('unit_cost', 0)
+                        item_sales = row.get('sales_amount', 0)
+                        pct_cost = fmt_pct(unit_cost, item_sales)
+                        
+                        html += f'<td style="border:1px solid #333; padding:5px;">{prod_name}</td>'
+                        html += f'<td style="border:1px solid #333; text-align:center;">{sku}</td>'
+                        
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_sales)}</td>'
+                        
+                        html += f'<td style="border:1px solid #333; text-align:right;">{fmt_num(unit_cost)}</td>'
+                        html += f'<td style="border:1px solid #333; text-align:center;">{pct_cost}</td>'
+                        
+                        if i == 0:
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_fees)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_fees, order_sales)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_aff)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_aff, order_sales)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(ops_cost)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(ops_cost, order_sales)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{settle_date_str}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_settle)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right; font-weight:bold;">{fmt_num(order_net_profit)}</td>'
+                            html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_net_profit, order_sales)}</td>'
+                        html += "</tr>"
+
+                html += f"""
+                <tr style="background-color: #010538; font-weight: bold;">
+                    <td colspan="4" style="text-align: center; padding: 10px; border-top: 2px solid #555;">รวมทั้งหมด</td>
+                    <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_sales)}</td>
+                    <td colspan="10" style="border-top: 2px solid #555;"></td>
+                    <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_net_profit)}</td>
+                    <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_net_profit, sum_sales)}</td>
+                </tr>
+                """
+                html += "</tbody></table>"
+                st.markdown(f'<div class="custom-table-wrapper">{html}</div>', unsafe_allow_html=True)
+    except Exception as e: st.error(f"Error Details: {e}")
