@@ -26,15 +26,26 @@ def init_db():
         conn.execute(text("SELECT 1"))
     return True
 
-def fetch_orders(platform=None):
-    """Fetch orders from the database."""
+def fetch_orders(platform=None, start_date=None, end_date=None):
+    """
+    Fetch orders from the database.
+    Supports filtering by platform and date range (inclusive).
+    """
     engine = get_engine()
-    query = "SELECT * FROM orders"
+    query = "SELECT * FROM orders WHERE 1=1"
     params = {}
     
     if platform:
-        query += " WHERE platform = %(platform)s"
+        query += " AND platform = %(platform)s"
         params['platform'] = platform
+    
+    if start_date:
+        query += " AND created_date >= %(start_date)s"
+        params['start_date'] = start_date
+        
+    if end_date:
+        query += " AND created_date <= %(end_date)s"
+        params['end_date'] = end_date
         
     with engine.connect() as conn:
         return pd.read_sql(query, conn, params=params)

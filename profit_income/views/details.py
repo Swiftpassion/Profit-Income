@@ -14,14 +14,16 @@ def render_details():
     with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
 
     try:
-        # Use cached function
-        raw_df = fetch_orders(platform=selected_platform)
+    try:
+        # Use cached function with DB-level filtering
+        # Note: We fetch loosely based on date to ensure we get everything, 
+        # but exact timestamp filtering might still be needed if created_date in DB is datetime
+        raw_df = fetch_orders(platform=selected_platform, start_date=d_start_det, end_date=d_end_det)
         
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
-            st.info(f"Raw Query = {len(raw_df)}")
-            mask = (raw_df['created_date'] >= d_start_det) & \
-                   (raw_df['created_date'] <= d_end_det)
+            # Secondary filter just in case of timezone/timestamp edge cases
+            mask = (raw_df['created_date'] >= d_start_det) & (raw_df['created_date'] <= d_end_det)
             df = raw_df.loc[mask].copy()
             
             if df.empty:
@@ -32,6 +34,24 @@ def render_details():
                 
                 df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
                 
+                # --- Pagination Logic ---
+                items_per_page = 50
+                total_items = len(df)
+                total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+
+                col_p1, col_p2, col_p3 = st.columns([1, 2, 4])
+                with col_p1:
+                    page = st.number_input("หน้า", min_value=1, max_value=total_pages, value=1, key="det_page")
+                with col_p2:
+                    st.empty() # Spacer
+                with col_p3:
+                    st.caption(f"แสดงหน้า {page}/{total_pages} (ทั้งหมด {total_items:,.0f} รายการ)")
+
+                start_idx = (page - 1) * items_per_page
+                end_idx = start_idx + items_per_page
+                page_df = df.iloc[start_idx:end_idx]
+                # ------------------------
+
                 h_blue = "#1e3c72"; h_cyan = "#22b8e6"; h_green = "#27ae60"
                 html = f"""
                 <table style="width:100%; border-collapse: collapse; font-size: 13px; color: white;">
@@ -58,7 +78,7 @@ def render_details():
                     </thead>
                     <tbody>
                 """
-                grouped = df.groupby('order_id', sort=False)
+                grouped = page_df.groupby('order_id', sort=False)
                 row_counter = 0
                 def fmt_num(val, color_neg=True):
                     s = f"{val:,.2f}"
