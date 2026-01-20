@@ -15,14 +15,13 @@ def render_details():
 
     try:
         # Use cached function
-        raw_df = fetch_orders()
+        raw_df = fetch_orders(platform=selected_platform)
         
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
             st.info(f"Raw Query = {len(raw_df)}")
             mask = (raw_df['created_date'] >= d_start_det) & \
-                   (raw_df['created_date'] <= d_end_det) & \
-                   (raw_df['platform'] == selected_platform)
+                   (raw_df['created_date'] <= d_end_det)
             df = raw_df.loc[mask].copy()
             
             if df.empty:

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS daily_ads_metrics (
 -- Create orders table
 CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
-    order_id TEXT UNIQUE NOT NULL,
+    order_id TEXT NOT NULL,
     tracking_id TEXT,
     sku TEXT,
     product_name TEXT,

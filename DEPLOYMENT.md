@@ -118,7 +118,7 @@ We will create 3 background services so your apps run automatically.
 sudo nano /etc/systemd/system/profit_income.service
 ```
 
-**Paste content:** (Replace `/home/ubuntu/profit-income-project` with your actual path if different)
+**Paste content:** (Replace `/root/mos_app` with your actual path if different)
 
 ```ini
 [Unit]
@@ -126,9 +126,9 @@ Description=Streamlit Profit Income
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/profit-income-project
-ExecStart=/home/ubuntu/profit-income-project/venv/bin/streamlit run profit_income/streamlit_app.py --server.port 8501 --server.baseUrlPath=profit --server.headless=true
+User=root
+WorkingDirectory=/root/mos_app
+ExecStart=/root/mos_app/venv/bin/streamlit run profit_income/streamlit_app.py --server.port 8501 --server.baseUrlPath=profit --server.headless=true
 Restart=always
 
 [Install]
@@ -149,9 +149,9 @@ Description=Streamlit Stock JST
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/profit-income-project
-ExecStart=/home/ubuntu/profit-income-project/venv/bin/streamlit run stock_jst/app.py --server.port 8502 --server.baseUrlPath=stock --server.headless=true
+User=root
+WorkingDirectory=/root/mos_app
+ExecStart=/root/mos_app/venv/bin/streamlit run stock_jst/app.py --server.port 8502 --server.baseUrlPath=stock --server.headless=true
 Restart=always
 
 [Install]
@@ -172,9 +172,9 @@ Description=Streamlit Shop Dashboard
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/profit-income-project
-ExecStart=/home/ubuntu/profit-income-project/venv/bin/streamlit run shop_dashboard/app.py --server.port 8503 --server.baseUrlPath=shop --server.headless=true
+User=root
+WorkingDirectory=/root/mos_app
+ExecStart=/root/mos_app/venv/bin/streamlit run shop_dashboard/app.py --server.port 8503 --server.baseUrlPath=shop --server.headless=true
 Restart=always
 
 [Install]

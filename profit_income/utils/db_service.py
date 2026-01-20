@@ -26,13 +26,18 @@ def init_db():
         conn.execute(text("SELECT 1"))
     return True
 
-def fetch_orders(query_params=None):
+def fetch_orders(platform=None):
     """Fetch orders from the database."""
     engine = get_engine()
     query = "SELECT * FROM orders"
-    # Future: Add filtering logic if needed
+    params = {}
+    
+    if platform:
+        query += " WHERE platform = %(platform)s"
+        params['platform'] = platform
+        
     with engine.connect() as conn:
-        return pd.read_sql(query, conn)
+        return pd.read_sql(query, conn, params=params)
 
 def save_orders(df, replace=True):
     """
