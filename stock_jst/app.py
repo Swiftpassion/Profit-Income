@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 
 from database import get_db, init_db
 import services
+from pages.data_manager import show_data_manager_page
 
 # Google Service Account Imports (Preserved for existing Logic)
 from google.oauth2 import service_account
@@ -514,27 +515,49 @@ def update_master_limits(df_edited):
 # 5. Main App & Data Loading
 # ==========================================
 st.sidebar.markdown(f"👤 **ผู้ใช้งาน:** {st.session_state.user_email}")
-if st.sidebar.button("🚪 ออกจากระบบ"):
-    st.session_state.logged_in = False
-    st.session_state.otp_sent = False
-    st.query_params.clear() 
-    st.rerun()
+
 
 st.title("📊 JST Hybrid Management System")
 
 # --- 2. Sidebar ---
 with st.sidebar:
+    # Navigation Menu
+    menu = ["📅 สรุปยอดขายรายวัน", "📈 รายงาน Stock", "📦 รายการสั่งซื้อ (PO)", "📂 จัดการข้อมูล (Upload)"]
+    
+    # Ensure current_page is valid
+    if "current_page" not in st.session_state or st.session_state.current_page not in menu:
+        st.session_state.current_page = menu[0]
+        
+    choice = st.radio("เมนูหลัก", menu, key="current_page")
+    # st.session_state.current_page is now automatically updated by the radio widget due to key binding
+
+    st.divider()
     if st.button("🔄 รีเฟรชข้อมูลล่าสุด", type="primary", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
     
     st.divider()
-    st.subheader("📂 เมนูจัดการไฟล์")
-    st.link_button("📂 ไฟล์ยอดขาย JST (Drive)", "https://drive.google.com/drive/folders/12jyMKgFHoc9-_eRZ-VN9QLsBZ31ZJP4T", use_container_width=True)
-    st.link_button("📦 ไฟล์คลังสินค้าคงเหลือ JST (Drive)", "https://drive.google.com/drive/folders/1-hXu2RG2gNKMkW3ZFBFfhjQEhTacVYzk", use_container_width=True)
+    st.subheader("📂 ไฟล์ในเครื่อง (Local Files)")
+    # Show files in local_data folder
+    import os
+    local_dir = "local_data"
+    if not os.path.exists(local_dir):
+        os.makedirs(local_dir)
+        
+    files = os.listdir(local_dir)
+    if files:
+        for f in files:
+            st.text(f"📄 {f}")
+    else:
+        st.caption("ว่างเปล่า (Empty)")
+        
     st.divider()
     st.subheader("⚙️ ตั้งค่าระบบ")
     st.link_button("🔗 เพิ่ม SKU / Master", "https://docs.google.com/spreadsheets/d/1SC_Dpq2aiMWsS3BGqL_Rdf7X4qpTFkPA0wPV6mqqosI/edit?gid=0#gid=0", type="secondary", use_container_width=True)
+
+
+# Update Session State based on Radio Choice (Redundant if using variable above, but keeping for safety)
+# st.session_state.current_page = choice  <-- Removed as we are now using key='current_page'
 
 # --- 3. Session State (Dialogs) ---
 if "active_dialog" not in st.session_state: st.session_state.active_dialog = None 
@@ -1752,15 +1775,8 @@ if "delete_idx" in st.query_params:
     st.rerun()
 # -------------------------------------------
 
-selected_page = st.radio(
-    "", 
-    options=["📅 สรุปยอดขายรายวัน", "📝 รายการสั่งซื้อ", "📈 รายงาน Stock"],
-    index=["📅 สรุปยอดขายรายวัน", "📝 รายการสั่งซื้อ", "📈 รายงาน Stock"].index(st.session_state.current_page),
-    horizontal=True,
-    label_visibility="collapsed",
-    key="nav_radio",
-    on_change=lambda: st.session_state.update(current_page=st.session_state.nav_radio)
-)
+# Removed duplicate navigation radio from here since it is now in the sidebar.
+# selected_page = st.radio(...)
 
 st.divider()
 
@@ -2585,6 +2601,12 @@ elif st.session_state.current_page == "📈 รายงาน Stock":
         )
 
     else: st.warning("ไม่พบข้อมูล Master Product")
+
+# ==========================================
+# EXECUTE DIALOGS
+# --- Page 4: Data Manager ---
+elif st.session_state.current_page == "📂 จัดการข้อมูล (Upload)":
+    show_data_manager_page()
 
 # ==========================================
 # EXECUTE DIALOGS
