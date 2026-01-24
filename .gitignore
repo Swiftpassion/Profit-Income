@@ -30,3 +30,8 @@ pgdata/
 debug_output.txt
 debug_output_income.txt
 debug_tiktok_data.py
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
