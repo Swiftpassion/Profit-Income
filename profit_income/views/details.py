@@ -14,7 +14,6 @@ def render_details():
     with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
 
     try:
-    try:
         # Use cached function with DB-level filtering
         # Note: We fetch loosely based on date to ensure we get everything, 
         # but exact timestamp filtering might still be needed if created_date in DB is datetime
