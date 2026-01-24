@@ -1755,7 +1755,7 @@ if "edit_po" in st.query_params and "edit_pid" in st.query_params:
     # บันทึกข้อมูลเป้าหมาย และบังคับเปลี่ยนหน้า
     st.session_state.target_edit_data = {"po": p_po, "pid": p_pid}
     st.session_state.active_dialog = "po_edit_direct"
-    st.session_state.current_page = "📝 รายการสั่งซื้อ" 
+    st.session_state.current_page = "📦 รายการสั่งซื้อ (PO)" 
     st.rerun()
 if "delete_idx" in st.query_params:
     d_idx = st.query_params["delete_idx"]
@@ -1771,7 +1771,7 @@ if "delete_idx" in st.query_params:
     
     # เปิด Dialog ยืนยัน
     st.session_state.active_dialog = "delete_confirm"
-    st.session_state.current_page = "📝 รายการสั่งซื้อ"
+    st.session_state.current_page = "📦 รายการสั่งซื้อ (PO)"
     st.rerun()
 # -------------------------------------------
 
@@ -2068,7 +2068,7 @@ if st.session_state.current_page == "📅 สรุปยอดขายรา�
             else: st.error("⚠️ ไม่พบข้อมูลการขายในช่วงเวลานี้")
 
 # --- Page 2: Purchase Orders ---
-elif st.session_state.current_page == "📝 รายการสั่งซื้อ":
+elif st.session_state.current_page == "📦 รายการสั่งซื้อ (PO)":
     
     # [REMOVED] ตรงนี้คือโค้ดเดิมที่ผิดที่ (เอา edit_po check ออกจากตรงนี้แล้ว)
     

@@ -34,6 +34,9 @@ def init_db():
     import models # Import models to register them with Base
     try:
         Base.metadata.create_all(bind=engine)
-        st.success("✅ Database initialized successfully!")
+        import time
+        success_msg = st.success("✅ Database initialized successfully!")
+        time.sleep(3)
+        success_msg.empty()
     except Exception as e:
         st.error(f"❌ Error initializing database: {e}")
