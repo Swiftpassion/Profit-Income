@@ -20,6 +20,13 @@ else:
 SQLITE_DB_PATH = "stock_jst.db"
 SQLITE_URL = f"sqlite:///{SQLITE_DB_PATH}"
 
+# Google Sheet Config
+MASTER_SHEET_ID = "1SC_Dpq2aiMWsS3BGqL_Rdf7X4qpTFkPA0wPV6mqqosI"
+TAB_NAME_STOCK = "MASTER"
+TAB_NAME_PO = "PO_DATA"
+FOLDER_ID_STOCK_ACTUAL = "1-hXu2RG2gNKMkW3ZFBFfhjQEhTacVYzk"
+FOLDER_ID_DATA_SALE = "12jyMKgFHoc9-_eRZ-VN9QLsBZ31ZJP4T"
+
 # Excel Column Mappings
 COLUMN_MAPPING_PRODUCT = {
     'รหัสสินค้า': 'product_id', 'รหัส': 'product_id', 'ID': 'product_id', 'รหัสSKU': 'product_id',

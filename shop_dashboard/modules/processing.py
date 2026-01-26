@@ -65,7 +65,7 @@ def process_data(mode="MODE_DRIVE"):
     cols = [c for c in ['หมายเลขคำสั่งซื้อออนไลน์', 'สถานะคำสั่งซื้อ', 
             'บริษัทขนส่ง', 'เวลาสั่งซื้อ', 'รูปแบบสินค้า', 'จำนวน', 
             'รายละเอียดยอดที่ชำระแล้ว', 'ผู้สร้างคำสั่งซื้อ', 
-            'วิธีการชำระเงิน', 'ชื่อสินค้า', 'ประเภทการทำงาน'] 
+            'วิธีการชำระเงิน', 'ชื่อสินค้า', 'ประเภทการทำงาน', 'Shop'] 
             if c in df_data.columns]
     
     df = df_data[cols].copy()
@@ -181,6 +181,7 @@ def process_data(mode="MODE_DRIVE"):
     order_agg = {
         'Date': 'first',
         'SKU_Main': 'first',
+        'Shop': 'first',
         'ชื่อสินค้า': 'first',
         'จำนวน': 'sum',
         'รายละเอียดยอดที่ชำระแล้ว': 'sum',
@@ -210,7 +211,12 @@ def process_data(mode="MODE_DRIVE"):
             df_ads_raw['SKU_Extracted'] = df_ads_raw[col_camp].astype(str).str.extract(r'\[(.*?)\]')
             df_ads_raw['SKU_Main'] = df_ads_raw['SKU_Extracted'].str.replace(' ', '', regex=False)
             
-            df_ads_agg = df_ads_raw.groupby(['Date', 'SKU_Main'])[col_cost].sum().reset_index(name='Ads_Amount')
+            if 'shop_name' in df_ads_raw.columns:
+                 df_ads_agg = df_ads_raw.groupby(['Date', 'SKU_Main', 'shop_name'])[col_cost].sum().reset_index(name='Ads_Amount')
+                 df_ads_agg.rename(columns={'shop_name': 'Shop'}, inplace=True)
+            else:
+                 df_ads_agg = df_ads_raw.groupby(['Date', 'SKU_Main'])[col_cost].sum().reset_index(name='Ads_Amount')
+                 df_ads_agg['Shop'] = 'Unknown'
 
     # --- FINAL DAILY AGG ---
     daily_agg = {
@@ -228,10 +234,15 @@ def process_data(mode="MODE_DRIVE"):
     }
 
     df_order_renamed = df_order.rename(columns={'หมายเลขคำสั่งซื้อออนไลน์': 'จำนวนออเดอร์'})
-    df_daily = df_order_renamed.groupby(['Date', 'SKU_Main']).agg(daily_agg).reset_index()
+    
+    # Check if Shop exists (it might not if old data format)
+    if 'Shop' not in df_order_renamed.columns: df_order_renamed['Shop'] = 'Unknown'
+
+    df_daily = df_order_renamed.groupby(['Date', 'SKU_Main', 'Shop']).agg(daily_agg).reset_index()
 
     if not df_ads_agg.empty:
-        df_daily = pd.merge(df_daily, df_ads_agg, on=['Date', 'SKU_Main'], how='outer')
+        # Merge includes Shop
+        df_daily = pd.merge(df_daily, df_ads_agg, on=['Date', 'SKU_Main', 'Shop'], how='outer')
     else: df_daily['Ads_Amount'] = 0
 
     df_daily = df_daily.fillna(0)

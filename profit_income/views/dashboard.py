@@ -51,15 +51,61 @@ def render_dashboard():
         # B. ดึงข้อมูลค่าโฆษณา (Cached)
         ads_all = fetch_ads()
         ads_db = pd.DataFrame()
+
+        # --- SHOP SELECTION ---
+        all_shops = set()
+        if not raw_df.empty and 'shop_name' in raw_df.columns:
+            all_shops.update(raw_df['shop_name'].dropna().unique())
+        if not ads_all.empty and 'shop_name' in ads_all.columns:
+            all_shops.update(ads_all['shop_name'].dropna().unique())
+        
+        sorted_shops = sorted(list(all_shops))
+
+        st.markdown("##### 🏪 เลือกร้านค้า (Shop Name)")
+        
+        # Container for Select All button and Multiselect
+        col_shop_sel, col_shop_btn = st.columns([5, 1])
+        
+        # Logic for Select All
+        if 'selected_shops' not in st.session_state:
+            st.session_state.selected_shops = sorted_shops
+
+        def select_all_shops():
+            st.session_state.selected_shops = sorted_shops
+        
+        with col_shop_btn:
+             if st.button("✅ เลือกทั้งหมด", on_click=select_all_shops, use_container_width=True):
+                 pass
+
+        with col_shop_sel:
+            selected_shops = st.multiselect(
+                "Filter Shop", 
+                sorted_shops, 
+                default=st.session_state.selected_shops,
+                key="shop_multiselect",
+                label_visibility="collapsed"
+            )
+            # Sync session state if user manually changes multiselect
+            if selected_shops != st.session_state.selected_shops:
+                 st.session_state.selected_shops = selected_shops
+
         
         if not ads_all.empty:
             # Filter ads data in memory (faster than DB query)
             ads_all['date'] = pd.to_datetime(ads_all['date']).dt.date
+            
+            # --- FILTER ADS BY SHOP ---
             mask_ads = (ads_all['date'] >= st.session_state.d_start) & (ads_all['date'] <= st.session_state.d_end)
+            if 'shop_name' in ads_all.columns and selected_shops:
+                mask_ads &= ads_all['shop_name'].isin(selected_shops)
+                
             ads_temp = ads_all[mask_ads].copy()
             
             if not ads_temp.empty:
-                ads_db = ads_temp.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
+                # Group by date if multiple shops selected to sum up ads
+                ads_grouped = ads_temp.groupby('date')[['ads_amount', 'roas_ads']].sum().reset_index()
+                
+                ads_db = ads_grouped.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
                 ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
                 ads_db['manual_roas'] = pd.to_numeric(ads_db['manual_roas'], errors='coerce').fillna(0)
                 ads_db = ads_db[['created_date', 'manual_ads', 'manual_roas']]
@@ -69,6 +115,11 @@ def render_dashboard():
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date']).dt.date
             mask = (raw_df['created_date'] >= st.session_state.d_start) & (raw_df['created_date'] <= st.session_state.d_end)
             if 'platform' in raw_df.columns: mask &= raw_df['platform'].str.upper().isin(sel_plats)
+            
+            # --- FILTER ORDERS BY SHOP ---
+            if 'shop_name' in raw_df.columns and selected_shops:
+                 mask &= raw_df['shop_name'].isin(selected_shops)
+
             df = raw_df.loc[mask].copy()
 
             for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:

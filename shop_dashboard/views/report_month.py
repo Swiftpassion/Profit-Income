@@ -152,9 +152,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         html += '<th class="fix-m-2" style="background-color:#2c3e50;color:white;">ยอดขาย</th>'
         html += '<th class="fix-m-3" style="background-color:#2c3e50;color:white;">ออเดอร์</th>'
         html += '<th class="fix-m-4" style="background-color:#27ae60;color:white;">กำไร</th>'
-        html += '<th class="fix-m-5" style="background-color:#27ae60;color:white;">%</th>'
         html += '<th class="fix-m-6" style="background-color:#e67e22;color:white;">ค่าแอด</th>'
-        html += '<th class="fix-m-7" style="background-color:#e67e22;color:white;">%</th>'
 
         for sku in final_skus:
             name = str(sku_name_lookup.get(sku, ""))
@@ -168,10 +166,8 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             html += f'<td class="fix-m-1">{r["วันที่"]}</td>'
             html += f'<td class="fix-m-2" style="font-weight:bold;">{fmt_n(r["ยอดขาย"])}</td>'
             html += f'<td class="fix-m-3" style="font-weight:bold;color:#ddd;">{fmt_n(r["จำนวนออเดอร์"])}</td>'
-            html += f'<td class="fix-m-4" style="font-weight:bold; color:{color_profit};">{fmt_n(r["กำไร"])}</td>'
-            html += f'<td class="fix-m-5" style="color:{color_pct_profit};">{fmt_p(r["%กำไร"])}</td>'
-            html += f'<td class="fix-m-6" style="color:#e67e22;">{fmt_n(r["ค่าแอด"])}</td>'
-            html += f'<td class="fix-m-7" style="color:#e67e22;">{fmt_p(r["%แอด"])}</td>'
+            html += f'<td class="fix-m-4" style="font-weight:bold; color:{color_profit};">{fmt_n(r["กำไร"])} <span style="font-size:0.85em">({fmt_p(r["%กำไร"])})</span></td>'
+            html += f'<td class="fix-m-6" style="color:#e67e22;">{fmt_n(r["ค่าแอด"])} <span style="font-size:0.85em">({fmt_p(r["%แอด"])})</span></td>'
 
             for sku in final_skus:
                 val = r.get(sku, 0)
@@ -192,10 +188,8 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         html += f'<td class="fix-m-2" style="background-color: {bg_total}; color: {c_total};">{fmt_n(g_sales)}</td>'
         html += f'<td class="fix-m-3" style="background-color: {bg_total}; color: {c_total};">{fmt_n(g_orders)}</td>'
         c_prof_sum = "#7CFC00" if g_profit >= 0 else "#FF0000"
-        html += f'<td class="fix-m-4" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_n(g_profit)}</td>'
-        html += f'<td class="fix-m-5" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_p(g_pct_profit)}</td>'
-        html += f'<td class="fix-m-6" style="background-color: {bg_total}; color: #FF6633;">{fmt_n(g_ads)}</td>'
-        html += f'<td class="fix-m-7" style="background-color: {bg_total}; color: #FF6633;">{fmt_p(g_pct_ads)}</td>'
+        html += f'<td class="fix-m-4" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_n(g_profit)} <span style="font-size:0.85em; color:{c_prof_sum}">({fmt_p(g_pct_profit)})</span></td>'
+        html += f'<td class="fix-m-6" style="background-color: {bg_total}; color: #FF6633;">{fmt_n(g_ads)} <span style="font-size:0.85em; color:#FF6633">({fmt_p(g_pct_ads)})</span></td>'
 
         for sku in final_skus:
             val = footer_sums.loc[sku, 'Net_Profit']
@@ -252,9 +246,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             row_html += f'<td class="fix-m-2" style="{style_bg} color:{grand_text_col};">{txt_val_display}</td>'
             row_html += f'<td class="fix-m-3" style="{style_bg} color:{grand_text_col};"></td>'
             row_html += f'<td class="fix-m-4" style="{style_bg}"></td>'
-            row_html += f'<td class="fix-m-5" style="{style_bg}"></td>'
             row_html += f'<td class="fix-m-6" style="{style_bg}"></td>'
-            row_html += f'<td class="fix-m-7" style="{style_bg}"></td>'
 
             for sku in final_skus:
                 val = 0

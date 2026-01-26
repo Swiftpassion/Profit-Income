@@ -3,10 +3,13 @@ import pandas as pd
 import io
 import os
 from pathlib import Path
+import shutil
 import gspread
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from sqlalchemy import text
+from .database import get_engine, init_db
 
 # --- CONSTANTS ---
 FOLDER_ID_DATA = "1ciI_X2m8pVcsjRsPuUf5sg--6uPSPPDp"  # ไฟล์ยอดขาย JST
@@ -174,8 +177,215 @@ def load_data_local():
 
     return df_data, df_ads_raw, df_master, df_fix
 
+
+def ingest_local_data_to_db():
+    """Reads all files from local_data/{shop}/... and bulk inserts to PostgreSQL."""
+    engine = get_engine()
+    
+    # 1. Truncate Tables
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE TABLE raw_sales, raw_ads RESTART IDENTITY;"))
+    
+    # 2. Iterate Shops
+    if not LOCAL_DATA_DIR.exists(): return
+    
+    # Exclude legacy folders 'sales' and 'ads' if they exist in root
+    shops = [d for d in LOCAL_DATA_DIR.iterdir() if d.is_dir() and d.name not in ["sales", "ads"]]
+    
+    total_shops = len(shops)
+    for i, shop_dir in enumerate(shops):
+        shop_name = shop_dir.name
+        st.write(f"🏢 Processing Shop ({i+1}/{total_shops}): **{shop_name}**")
+        
+        # --- SALES ---
+        path_sales = shop_dir / "sales"
+        if path_sales.exists():
+            for f in path_sales.iterdir():
+                if f.suffix.lower() in ['.csv', '.xlsx', '.xls']:
+                    try:
+                        if f.suffix.lower() == '.csv': df = pd.read_csv(f, dtype=str)
+                        else: df = pd.read_excel(f, dtype=str)
+                        
+                        # Process Columns
+                        # Map to DB columns: order_id, status, courier, order_time, sku_code, quantity, amount_paid...
+                        # Need a mapping logic. For now, try to rename standard columns.
+                        # We used to read them in process_data. Let's do partial cleaning here.
+                        
+                        # Standardize columns based on known headers in files
+                        # Assuming the file format is consistent with what process_data expected
+                        # We need to be careful with column names.
+                        
+                        # Let's map Thai columns to DB columns
+                        # DB: order_id, status, courier, order_time, sku_code, quantity, amount_paid, creator, payment_method, product_name, work_type
+                        col_map = {
+                            'หมายเลขคำสั่งซื้อออนไลน์': 'order_id',
+                            'สถานะคำสั่งซื้อ': 'status',
+                            'บริษัทขนส่ง': 'courier',
+                            'เวลาสั่งซื้อ': 'order_time',
+                            'รูปแบบสินค้า': 'sku_code',
+                            'จำนวน': 'quantity',
+                            'รายละเอียดยอดที่ชำระแล้ว': 'amount_paid',
+                            'ผู้สร้างคำสั่งซื้อ': 'creator',
+                            'วิธีการชำระเงิน': 'payment_method',
+                            'ชื่อสินค้า': 'product_name',
+                            'ประเภทการทำงาน': 'work_type'
+                        }
+                        
+                        df_db = df.rename(columns=col_map)
+                        
+                        # Keep only valid columns
+                        valid_cols = list(col_map.values())
+                        df_db = df_db[[c for c in df_db.columns if c in valid_cols]]
+                        df_db['shop_name'] = shop_name
+                        
+                        # Clean numeric
+                        for c in ['quantity', 'amount_paid']:
+                            if c in df_db.columns:
+                                df_db[c] = pd.to_numeric(df_db[c].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+                        
+                        df_db.to_sql('raw_sales', engine, if_exists='append', index=False, chunksize=1000)
+                    except Exception as e:
+                        print(f"Error ingesting sale file {f}: {e}")
+
+        # --- ADS ---
+        path_ads = shop_dir / "ads"
+        if path_ads.exists():
+            for f in path_ads.iterdir():
+                if f.suffix.lower() in ['.csv', '.xlsx', '.xls']:
+                    try:
+                        if f.suffix.lower() == '.csv': df = pd.read_csv(f)
+                        else: df = pd.read_excel(f)
+                        
+                        # Map Columns
+                        # Ads often have: Date, Campaign Name, Cost
+                        # DB: date, campaign_name, cost
+                        
+                        col_cost = next((c for c in ['จำนวนเงินที่ใช้จ่ายไป (THB)', 'Cost', 'Amount'] if c in df.columns), None)
+                        col_date = next((c for c in ['วัน', 'Date'] if c in df.columns), None)
+                        col_camp = next((c for c in ['ชื่อแคมเปญ', 'Campaign'] if c in df.columns), None)
+                        
+                        if col_cost and col_date:
+                            df_db = pd.DataFrame()
+                            df_db['date'] = pd.to_datetime(df[col_date], errors='coerce')
+                            df_db['cost'] = pd.to_numeric(df[col_cost].astype(str).str.replace(',',''), errors='coerce').fillna(0)
+                            df_db['campaign_name'] = df[col_camp] if col_camp else ""
+                            df_db['shop_name'] = shop_name
+                            
+                            df_db = df_db.dropna(subset=['date'])
+                            df_db.to_sql('raw_ads', engine, if_exists='append', index=False)
+                    except Exception as e:
+                        print(f"Error ingesting ads file {f}: {e}")
+    
+    # --- MASTER ITEM ---
+    # Load Master Item from local file if exists
+    master_path = LOCAL_DATA_DIR / "master_item.xlsx"
+    if master_path.exists():
+         try:
+            df_master = pd.read_excel(master_path, sheet_name="MASTER_ITEM")
+            # Map columns
+            # DB: sku, name, type, cost, box_cost, delivery_cost, com_admin, com_tele, p_...
+            
+            # Helper to map common names
+            m_map = {
+                'SKU': 'sku',
+                'ชื่อสินค้า': 'name',
+                'Type': 'type',
+                'ทุน': 'cost', 'ต้นทุน': 'cost',
+                'ราคากล่อง': 'box_cost',
+                'ค่าส่งเฉลี่ย': 'delivery_cost',
+                'ค่าคอมมิชชั่น Admin': 'com_admin',
+                'ค่าคอมมิชชั่น Telesale': 'com_tele',
+                'J&T Express': 'p_jnt',
+                'Flash Express': 'p_flash',
+                'Kerry Express': 'p_kerry',
+                'ThailandPost': 'p_thai_post',
+                'DHL_1': 'p_dhl',
+                'SPX Express': 'p_spx',
+                'LEX TH': 'p_lex',
+                'Standard Delivery - ส่งธรรมดาในประเทศ': 'p_std'
+            }
+            
+            df_m_db = df_master.rename(columns=m_map)
+            df_m_db.columns = [c.strip() for c in df_m_db.columns]
+            
+            valid_m_cols = ['sku', 'name', 'type', 'cost', 'box_cost', 'delivery_cost', 
+                            'com_admin', 'com_tele', 'p_jnt', 'p_flash', 'p_kerry', 
+                            'p_thai_post', 'p_dhl', 'p_spx', 'p_lex', 'p_std']
+            
+            df_m_db = df_m_db[[c for c in df_m_db.columns if c in valid_m_cols]]
+            
+            # Clean numeric
+            for c in df_m_db.columns:
+                if c not in ['sku', 'name', 'type']:
+                    df_m_db[c] = pd.to_numeric(df_m_db[c].astype(str).str.replace(',','').str.replace('%',''), errors='coerce').fillna(0)
+                    # Handle % inputs? If value > 1 assumed not percent? Logic says if % is present... 
+                    # The `safe_float` logic in processing handled %.
+                    # Here we just blindly strip %.
+            
+            with engine.begin() as conn:
+                conn.execute(text("TRUNCATE TABLE master_item;"))
+            
+            df_m_db.to_sql('master_item', engine, if_exists='append', index=False)
+            
+         except Exception as e:
+             print(f"Error ingest master: {e}")
+
+def load_data_from_db():
+    """Fetches RAW data from Database (for legacy compatibility)."""
+    # Note: Ideally we switch to SQL processing, but legacy code expects DF.
+    # We will query raw_sales and serve it as df_data
+    engine = get_engine()
+    
+    # We need to reconstruct the DF structure that process_data expects
+    # DB columns -> Original Thai columns
+    q_sales = "SELECT * FROM raw_sales"
+    df_sales = pd.read_sql(q_sales, engine)
+    
+    # Reverse Map
+    rev_map = {
+        'order_id': 'หมายเลขคำสั่งซื้อออนไลน์',
+        'status': 'สถานะคำสั่งซื้อ',
+        'courier': 'บริษัทขนส่ง',
+        'order_time': 'เวลาสั่งซื้อ',
+        'sku_code': 'รูปแบบสินค้า',
+        'quantity': 'จำนวน',
+        'amount_paid': 'รายละเอียดยอดที่ชำระแล้ว',
+        'creator': 'ผู้สร้างคำสั่งซื้อ',
+        'payment_method': 'วิธีการชำระเงิน',
+        'product_name': 'ชื่อสินค้า',
+        'work_type': 'ประเภทการทำงาน'
+    }
+    df_sales = df_sales.rename(columns=rev_map)
+    # Add Shop Name needed? Legacy code doesn't use it yet, but we will need it for filtering
+    # process_data() currently merges everything. 
+    # We should add 'Shop' column to df_sales if we want to filter later.
+    df_sales['Shop'] = df_sales['shop_name']
+    
+    q_ads = "SELECT * FROM raw_ads"
+    df_ads = pd.read_sql(q_ads, engine)
+    # Map back
+    # DB: date, campaign_name, cost
+    df_ads = df_ads.rename(columns={
+        'date': 'Date', 'campaign_name': 'ชื่อแคมเปญ', 'cost': 'จำนวนเงินที่ใช้จ่ายไป (THB)'
+    })
+    
+    q_master = "SELECT * FROM master_item"
+    df_master = pd.read_sql(q_master, engine)
+    # Map back
+    m_rev_map = {
+        'sku': 'SKU', 'name': 'ชื่อสินค้า', 'type': 'Type', 'cost': 'ต้นทุน',
+        'box_cost': 'ราคากล่อง', 'delivery_cost': 'ค่าส่งเฉลี่ย',
+        'com_admin': 'ค่าคอมมิชชั่น Admin', 'com_tele': 'ค่าคอมมิชชั่น Telesale'
+        # Couriers...
+    }
+    df_master = df_master.rename(columns=m_rev_map)
+    
+    return df_sales, df_ads, df_master, pd.DataFrame() # fix cost empty for now
+
 def load_raw_files(mode="MODE_DRIVE"):
+    # Intercept LOCAl mode to use DB
     if mode == "MODE_LOCAL":
-        return load_data_local()
+        # Check if DB has data? Or just always load from DB
+        return load_data_from_db()
     else:
         return load_data_drive()

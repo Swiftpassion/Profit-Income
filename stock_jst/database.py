@@ -35,8 +35,8 @@ def init_db():
     try:
         Base.metadata.create_all(bind=engine)
         import time
-        success_msg = st.success("✅ Database initialized successfully!")
-        time.sleep(3)
-        success_msg.empty()
+        # success_msg = st.success("✅ Database initialized successfully!")
+        # time.sleep(3)
+        # success_msg.empty()
     except Exception as e:
         st.error(f"❌ Error initializing database: {e}")
