@@ -22,6 +22,7 @@ Thumbs.db
 # Project Data (Private/Local)
 data/
 pgdata/
+local_data/
 
 # Docker
 # Keep docker-compose.yml as it is needed to run the app
