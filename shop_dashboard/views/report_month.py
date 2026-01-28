@@ -152,7 +152,9 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         html += '<th class="fix-m-2" style="background-color:#2c3e50;color:white;">ยอดขาย</th>'
         html += '<th class="fix-m-3" style="background-color:#2c3e50;color:white;">ออเดอร์</th>'
         html += '<th class="fix-m-4" style="background-color:#27ae60;color:white;">กำไร</th>'
+        html += '<th class="fix-m-5" style="background-color:#27ae60;color:white;">%กำไร</th>'
         html += '<th class="fix-m-6" style="background-color:#e67e22;color:white;">ค่าแอด</th>'
+        html += '<th class="fix-m-7" style="background-color:#e67e22;color:white;">%แอด</th>'
 
         for sku in final_skus:
             name = str(sku_name_lookup.get(sku, ""))
@@ -166,8 +168,10 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             html += f'<td class="fix-m-1">{r["วันที่"]}</td>'
             html += f'<td class="fix-m-2" style="font-weight:bold;">{fmt_n(r["ยอดขาย"])}</td>'
             html += f'<td class="fix-m-3" style="font-weight:bold;color:#ddd;">{fmt_n(r["จำนวนออเดอร์"])}</td>'
-            html += f'<td class="fix-m-4" style="font-weight:bold; color:{color_profit};">{fmt_n(r["กำไร"])} <span style="font-size:0.85em">({fmt_p(r["%กำไร"])})</span></td>'
-            html += f'<td class="fix-m-6" style="color:#e67e22;">{fmt_n(r["ค่าแอด"])} <span style="font-size:0.85em">({fmt_p(r["%แอด"])})</span></td>'
+            html += f'<td class="fix-m-4" style="font-weight:bold; color:{color_profit};">{fmt_n(r["กำไร"])}</td>'
+            html += f'<td class="fix-m-5" style="font-weight:bold; color:{color_pct_profit};">{fmt_p(r["%กำไร"])}</td>'
+            html += f'<td class="fix-m-6" style="color:#e67e22;">{fmt_n(r["ค่าแอด"])}</td>'
+            html += f'<td class="fix-m-7" style="color:#e67e22;">{fmt_p(r["%แอด"])}</td>'
 
             for sku in final_skus:
                 val = r.get(sku, 0)
@@ -188,8 +192,10 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         html += f'<td class="fix-m-2" style="background-color: {bg_total}; color: {c_total};">{fmt_n(g_sales)}</td>'
         html += f'<td class="fix-m-3" style="background-color: {bg_total}; color: {c_total};">{fmt_n(g_orders)}</td>'
         c_prof_sum = "#7CFC00" if g_profit >= 0 else "#FF0000"
-        html += f'<td class="fix-m-4" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_n(g_profit)} <span style="font-size:0.85em; color:{c_prof_sum}">({fmt_p(g_pct_profit)})</span></td>'
-        html += f'<td class="fix-m-6" style="background-color: {bg_total}; color: #FF6633;">{fmt_n(g_ads)} <span style="font-size:0.85em; color:#FF6633">({fmt_p(g_pct_ads)})</span></td>'
+        html += f'<td class="fix-m-4" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_n(g_profit)}</td>'
+        html += f'<td class="fix-m-5" style="background-color: {bg_total}; color: {c_prof_sum};">{fmt_p(g_pct_profit)}</td>'
+        html += f'<td class="fix-m-6" style="background-color: {bg_total}; color: #FF6633;">{fmt_n(g_ads)}</td>'
+        html += f'<td class="fix-m-7" style="background-color: {bg_total}; color: #FF6633;">{fmt_p(g_pct_ads)}</td>'
 
         for sku in final_skus:
             val = footer_sums.loc[sku, 'Net_Profit']
@@ -197,26 +203,21 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             html += f'<td style="background-color: {bg_total}; color: {c_sku};">{fmt_n(val)}</td>'
         html += '</tr>'
         
-        def create_footer_row_new(row_cls, label, data_dict, val_type='num', dark_bg=False):
-            if "row-sales" in row_cls: bg_color = "#f9a825"       
-            elif "row-cost" in row_cls: bg_color = "#3366FF"      
-            elif "row-ads" in row_cls: bg_color = "#b802b8"       
-            elif "row-ops" in row_cls: bg_color = "#039be5"       
-            elif "row-com" in row_cls: bg_color = "#259b24"       
-            elif "row-pct-ads" in row_cls: bg_color = "#b802b8"    
-            elif "row-pct-cost" in row_cls: bg_color = "#A020F0"   
-            elif "row-pct-ops" in row_cls: bg_color = "#1E90FF"   
-            elif "row-pct-com" in row_cls: bg_color = "#5e35b1"    
+        def create_footer_row_new(row_cls, label, data_dict, show_pct=False, dark_bg=False):
+            if "row-sales" in row_cls: bg_color = "#2c3e50"       
+            elif "row-cost" in row_cls: bg_color = "#3366ff"      
+            elif "row-ads" in row_cls: bg_color = "#e67e22"       
+            elif "row-ops" in row_cls: bg_color = "#691e72"       
+            elif "row-com" in row_cls: bg_color = "#176f98"       
             else: bg_color = "#ffffff"
 
             if bg_color != "#ffffff": dark_bg = True
             
-            target_bold_rows = ["row-pct-ads", "row-pct-cost", "row-pct-ops", "row-pct-com"]
-            is_bold = row_cls in target_bold_rows
-            
             style_bg = f"background-color:{bg_color};"
             lbl_color = "#ffffff" if dark_bg else "#000000"
+            grand_text_col = "#ffffff" if dark_bg else "#333333"
             
+            # --- Calculate Grand Total ---
             grand_val = 0
             if label == "รวมทุนสินค้า": grand_val = total_cost_prod
             elif label == "รวมยอดขาย": grand_val = g_sales
@@ -224,32 +225,33 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             elif label == "รวมค่าแอด": grand_val = g_ads
             elif label == "รวมค่าดำเนินการ": grand_val = total_ops
             elif label == "รวมค่าคอมมิชชั่น": grand_val = total_com
-            elif label == "ค่าแอด / ยอดขาย": grand_val = (g_ads/g_sales*100) if g_sales else 0
-            elif label == "ทุน/ยอดขาย": grand_val = (g_cost/g_sales*100) if g_sales else 0
-            elif label == "ค่าดำเนินการ/ยอดขาย": grand_val = (total_ops/g_sales*100) if g_sales else 0
-            elif label == "ค่าคอมมิชชั่น/ยอดขาย": grand_val = (total_com/g_sales*100) if g_sales else 0
 
-            txt_val = fmt_p(grand_val) if val_type=='pct' else fmt_n(grand_val)
-            grand_text_col = "#333333"
-            if grand_val < 0: grand_text_col = "#FF0000"
-            elif dark_bg: grand_text_col = "#ffffff"
+            txt_val_display = fmt_n(grand_val)
+            if show_pct and g_sales > 0:
+                pct = (grand_val / g_sales * 100)
+                txt_val_display += f' <span style="font-size:0.85em">({fmt_p(pct)})</span>'
 
-            if is_bold:
-                label_display = f"<b>{label}</b>"
-                txt_val_display = f"<b>{txt_val}</b>"
-            else:
-                label_display = label
-                txt_val_display = txt_val
-
+            # --- Label + Grand Total Cells ---
+            # fix-m-1: Label
+            # fix-m-2: Value (Sales column position)
+            # fix-m-3..7: Empty or specific mapping?
+            # Note: fix-m-2 is Sales, fix-m-3 is Orders, fix-m-4 is Profit, fix-m-5 is %Profit, fix-m-6 is Ads, fix-m-7 is %Ads
+            # The current design puts the grand total in fix-m-2 (Sales col).
+            
             row_html = f'<tr class="{row_cls}">'
-            row_html += f'<td class="fix-m-1" style="{style_bg} color: {lbl_color} !important;">{label_display}</td>'
+            row_html += f'<td class="fix-m-1" style="{style_bg} color: {lbl_color} !important;">{label}</td>'
             row_html += f'<td class="fix-m-2" style="{style_bg} color:{grand_text_col};">{txt_val_display}</td>'
-            row_html += f'<td class="fix-m-3" style="{style_bg} color:{grand_text_col};"></td>'
+            row_html += f'<td class="fix-m-3" style="{style_bg}"></td>'
             row_html += f'<td class="fix-m-4" style="{style_bg}"></td>'
+            row_html += f'<td class="fix-m-5" style="{style_bg}"></td>'
             row_html += f'<td class="fix-m-6" style="{style_bg}"></td>'
+            row_html += f'<td class="fix-m-7" style="{style_bg}"></td>'
 
+            # --- SKU Columns ---
             for sku in final_skus:
                 val = 0
+                s = data_dict.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
+
                 if label == "รวมทุนสินค้า": 
                     val = data_dict.loc[sku, 'CAL_COST']
                 elif label == "รวมยอดขาย": 
@@ -262,43 +264,31 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
                             data_dict.loc[sku, 'CAL_COM_TELESALE'])
                 elif label == "รวมค่าคอมมิชชั่น":
                     val = data_dict.loc[sku, 'CAL_COM_ADMIN'] + data_dict.loc[sku, 'CAL_COM_TELESALE']
-                elif label == "ค่าแอด / ยอดขาย":
-                    s = data_dict.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
-                    val = (data_dict.loc[sku, 'Ads_Amount']/s*100) if s else 0
-                elif label == "ทุน/ยอดขาย":
-                    s = data_dict.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
-                    cost = data_dict.loc[sku, 'CAL_COST'] + data_dict.loc[sku, 'Other_Costs']
-                    val = (cost/s*100) if s else 0
-                elif label == "ค่าดำเนินการ/ยอดขาย":
-                    s = data_dict.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
-                    ops = (data_dict.loc[sku, 'Other_Costs'] - 
-                            data_dict.loc[sku, 'CAL_COM_ADMIN'] - 
-                            data_dict.loc[sku, 'CAL_COM_TELESALE'])
-                    val = (ops/s*100) if s else 0
-                elif label == "ค่าคอมมิชชั่น/ยอดขาย":
-                    s = data_dict.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
-                    com = data_dict.loc[sku, 'CAL_COM_ADMIN'] + data_dict.loc[sku, 'CAL_COM_TELESALE']
-                    val = (com/s*100) if s else 0
+                
+                txt_cell = fmt_n(val)
+                if show_pct and s > 0:
+                    pct = (val / s * 100)
+                    txt_cell = f'{fmt_n(val)} <span style="font-size:0.75em">({fmt_p(pct)})</span>'
+                elif show_pct:
+                    txt_cell = f'{fmt_n(val)} <span style="font-size:0.75em">(-)</span>'
 
-                txt = fmt_p(val) if val_type=='pct' else fmt_n(val)
-                cell_text_col = "#333333"
-                if val < 0: cell_text_col = "#FF0000"
+                cell_text_col = "#ffffff" if dark_bg else "#333333"
+                if val < 0: cell_text_col = "#FF0000" # Override for negative values if needed, but white bg usually handles it. 
+                # If dark bg, keep white unless extremely important? 
+                # Request didn't specify negative color behavior on footer, assume standard contrast.
+                # However, logic in previous code: if val < 0: cell_text_col = "#FF0000" elif dark_bg: "#ffffff"
+                if val < 0: cell_text_col = "#FF0000" # Keep red for negative
                 elif dark_bg: cell_text_col = "#ffffff"
-                txt_display = f"<b>{txt}</b>" if is_bold else txt
-                row_html += f'<td style="{style_bg} color:{cell_text_col};">{txt_display}</td>'
+
+                row_html += f'<td style="{style_bg} color:{cell_text_col};">{txt_cell}</td>'
             row_html += '</tr>'
             return row_html
 
-        html += create_footer_row_new("row-sales", "รวมยอดขาย", footer_sums, 'num')
-        html += create_footer_row_new("row-cost", "รวมทุนสินค้า", footer_sums, 'num')
-        html += create_footer_row_new("row-ads", "รวมค่าแอด", footer_sums, 'num')
-        html += create_footer_row_new("row-ops", "รวมค่าดำเนินการ", footer_sums, 'num')
-        html += create_footer_row_new("row-com", "รวมค่าคอมมิชชั่น", footer_sums, 'num')
-        
-        html += create_footer_row_new("row-pct-ads", "ค่าแอด / ยอดขาย", footer_sums, 'pct')
-        html += create_footer_row_new("row-pct-cost", "ทุน/ยอดขาย", footer_sums, 'pct')
-        html += create_footer_row_new("row-pct-ops", "ค่าดำเนินการ/ยอดขาย", footer_sums, 'pct')
-        html += create_footer_row_new("row-pct-com", "ค่าคอมมิชชั่น/ยอดขาย", footer_sums, 'pct')
+        html += create_footer_row_new("row-sales", "รวมยอดขาย", footer_sums, show_pct=False)
+        html += create_footer_row_new("row-cost", "รวมทุนสินค้า", footer_sums, show_pct=True)
+        html += create_footer_row_new("row-ads", "รวมค่าแอด", footer_sums, show_pct=True)
+        html += create_footer_row_new("row-ops", "รวมค่าดำเนินการ", footer_sums, show_pct=True)
+        html += create_footer_row_new("row-com", "รวมค่าคอมมิชชั่น", footer_sums, show_pct=True)
         
         html += '</tfoot></table></div>'
         st.markdown(html, unsafe_allow_html=True)

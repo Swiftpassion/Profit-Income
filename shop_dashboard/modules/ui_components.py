@@ -137,10 +137,10 @@ def load_css():
     .fix-m-1 { position: sticky; left: 0px !important;   z-index: 20; width: 110px !important; min-width: 110px !important; border-right: 1px solid #444; }
     .fix-m-2 { position: sticky; left: 110px !important; z-index: 20; width: 80px !important;  min-width: 80px !important;  border-right: 1px solid #444; }
     .fix-m-3 { position: sticky; left: 190px !important; z-index: 20; width: 50px !important;  min-width: 50px !important;  border-right: 1px solid #444; }
-    .fix-m-4 { position: sticky; left: 240px !important; z-index: 20; width: 115px !important;  min-width: 115px !important;  border-right: 1px solid #444; }
-    .fix-m-5 { position: sticky; left: 310px !important; z-index: 20; width: 0px !important;  min-width: 0px !important;  display: none !important; }
-    .fix-m-6 { position: sticky; left: 355px !important; z-index: 20; width: 115px !important;  min-width: 115px !important;  border-right: 1px solid #444; }
-    .fix-m-7 { position: sticky; left: 425px !important; z-index: 20; width: 0px !important;  min-width: 0px !important;  display: none !important; }
+    .fix-m-4 { position: sticky; left: 240px !important; z-index: 20; width: 90px !important;  min-width: 90px !important;  border-right: 1px solid #444; }
+    .fix-m-5 { position: sticky; left: 330px !important; z-index: 20; width: 60px !important;  min-width: 60px !important;  border-right: 1px solid #444; }
+    .fix-m-6 { position: sticky; left: 390px !important; z-index: 20; width: 90px !important;  min-width: 90px !important;  border-right: 1px solid #444; }
+    .fix-m-7 { position: sticky; left: 480px !important; z-index: 20; width: 60px !important;  min-width: 60px !important;  border-right: 1px solid #444; }
 
     /* --- 1. ส่วนหัวตาราง (THEAD) แก้ z-index ให้สูงขึ้น --- */
 .month-table thead th.fix-m-1, .month-table thead th.fix-m-2, 
@@ -172,7 +172,7 @@ def load_css():
     .month-table tfoot {
         position: sticky;
         bottom: 0;
-        z-index: 25;
+        z-index: 200;
         border-top: 2px solid #fff;
     }
     .month-table tfoot td.fix-m-1, 
@@ -182,7 +182,7 @@ def load_css():
     .month-table tfoot td.fix-m-5, 
     .month-table tfoot td.fix-m-6, 
     .month-table tfoot td.fix-m-7 {
-        z-index: 40 !important;
+        z-index: 60 !important;
     }
 
     .th-sku { background-color: #1e3c72 !important; color: white !important; min-width: 80px; }
