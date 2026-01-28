@@ -3,9 +3,15 @@ import streamlit as st
 def load_css():
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');
     
-    html, body, [class*="css"] { font-family: 'Kanit', sans-serif; }
+    html, body, [class*="css"], .stMarkdown, .stText, .stButton, .stSelectbox, .stTextInput, font { 
+        font-family: 'Sarabun', sans-serif !important; 
+    }
+    
+    * {
+        font-family: 'Sarabun', sans-serif !important;
+    }
 
     /* Container */
     .custom-table-wrapper {

@@ -31,8 +31,61 @@ def render_details():
                 for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount', 'unit_cost']:
                     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
                 
+                # --- Filters ---
+                st.markdown("##### ตัวกรองข้อมูล")
+                col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+                with col_f1:
+                    filter_prod_name = st.text_input("ค้นหาชื่อสินค้า", "")
+                with col_f2:
+                    filter_profit_range = st.slider("เลือกช่วง % กำไรสุทธิ", 0, 100, (0, 100))
+                with col_f3:
+                    st.write("") # Spacer
+                    st.write("") 
+                    filter_neg_profit = st.checkbox("แสดงเฉพาะออเดอร์ติดลบ (-)")
+
+                # 1. Filter by Product Name (Row level first)
+                if filter_prod_name:
+                    df = df[df['product_name'].astype(str).str.contains(filter_prod_name, na=False)]
+
+                # 2. Filter by Net Profit % (Need Order Level Aggregation to filter correctly)
+                # We need to compute order metrics to filter by them. 
+                # Strategy: Group by order_id -> calculate metric -> get list of valid order_ids -> filter original df
+                
+                # Calculate metrics for all orders currently in df
+                ops_cost_fixed = 10.0
+                grouped_metrics = df.groupby('order_id').apply(
+                    lambda x: pd.Series({
+                        'total_sales': x['sales_amount'].sum(),
+                        'total_cost': x['total_cost'].sum(),
+                        'total_fees': x['fees'].sum(),
+                        'total_aff': x['affiliate'].sum()
+                    })
+                ).reset_index()
+
+                grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - ops_cost_fixed
+                
+                # Avoid division by zero
+                grouped_metrics['net_profit_pct'] = grouped_metrics.apply(
+                    lambda row: (row['net_profit'] / row['total_sales'] * 100) if row['total_sales'] > 0 else 0, axis=1
+                )
+
+                valid_orders_mask = pd.Series(True, index=grouped_metrics.index)
+
+                if filter_neg_profit:
+                    valid_orders_mask = valid_orders_mask & (grouped_metrics['net_profit'] < 0)
+                else:
+                    valid_orders_mask = valid_orders_mask & (grouped_metrics['net_profit_pct'] >= filter_profit_range[0]) & (grouped_metrics['net_profit_pct'] <= filter_profit_range[1])
+                
+                valid_order_ids = grouped_metrics.loc[valid_orders_mask, 'order_id']
+                df = df[df['order_id'].isin(valid_order_ids)]
+
+
                 df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
                 
+                if df.empty:
+                    st.warning("ไม่พบข้อมูลตามเงื่อนไขที่เลือก")
+                    return # Stop rendering if empty
+
                 # --- Pagination Logic ---
                 items_per_page = 50
                 total_items = len(df)

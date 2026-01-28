@@ -20,11 +20,69 @@ def get_engine():
     return sqlalchemy.create_engine(DB_URL)
 
 def init_db():
-    """Check connection to the database."""
+    """Check connection to the database and ensure tables exist."""
     engine = get_engine()
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
+    
+    # Ensure shops table exists
+    init_shops_table()
     return True
+
+def init_shops_table():
+    """Create shops table if not exists."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS shops (
+                shop_name TEXT,
+                platform TEXT,
+                PRIMARY KEY (shop_name, platform)
+            );
+        """))
+        
+        # Seed default shops if empty (Optional, but good for transition)
+        # Check if empty
+        res = conn.execute(text("SELECT COUNT(*) FROM shops")).scalar()
+        if res == 0:
+            default_shops = [
+                ('TIKTOK 1', 'TIKTOK'), ('TIKTOK 2', 'TIKTOK'), ('TIKTOK 3', 'TIKTOK'),
+                ('SHOPEE 1', 'SHOPEE'), ('SHOPEE 2', 'SHOPEE'), ('SHOPEE 3', 'SHOPEE'),
+                ('LAZADA 1', 'LAZADA'), ('LAZADA 2', 'LAZADA'), ('LAZADA 3', 'LAZADA')
+            ]
+            for s, p in default_shops:
+                conn.execute(text("INSERT INTO shops (shop_name, platform) VALUES (:s, :p)"), {'s': s, 'p': p})
+
+def get_all_shops():
+    """Fetch all shops as a DataFrame."""
+    engine = get_engine()
+    return pd.read_sql("SELECT * FROM shops ORDER BY platform, shop_name", engine)
+
+def add_shop(shop_name, platform):
+    """Add a new shop."""
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO shops (shop_name, platform) VALUES (:s, :p)"),
+                {'s': shop_name, 'p': platform}
+            )
+        return True, "Success"
+    except Exception as e:
+        return False, str(e)
+
+def delete_shop(shop_name, platform):
+    """Delete a shop."""
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM shops WHERE shop_name = :s AND platform = :p"),
+                {'s': shop_name, 'p': platform}
+            )
+        return True, "Success"
+    except Exception as e:
+        return False, str(e)
 
 def fetch_orders(platform=None, start_date=None, end_date=None):
     """
