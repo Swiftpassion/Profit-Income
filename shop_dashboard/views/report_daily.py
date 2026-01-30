@@ -118,14 +118,14 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         sls = df_final_d['รายละเอียดยอดที่ชำระแล้ว']
 
         val_ops_item = df_final_d['BOX_COST'] + df_final_d['DELIV_COST'] + df_final_d['CAL_COD_COST']
-        df_final_d['% ค่าดำเนินการ'] = np.where(sls>0, (val_ops_item/sls)*100, 0)
+        df_final_d['% ค่าดำเนินการ'] = np.where(sls>0, (val_ops_item/sls*100), 0)
 
         val_com_item = df_final_d['CAL_COM_ADMIN'] + df_final_d['CAL_COM_TELESALE']
-        df_final_d['% ค่าคอมมิชชัน'] = np.where(sls>0, (val_com_item/sls)*100, 0)
+        df_final_d['% ค่าคอมมิชชัน'] = np.where(sls>0, (val_com_item/sls*100), 0)
 
-        df_final_d['% ทุนสินค้า'] = np.where(sls>0, (df_final_d['CAL_COST']/sls)*100, 0)
-        df_final_d['% Ads'] = np.where(sls>0, (df_final_d['Ads_Amount']/sls)*100, 0)
-        df_final_d['% กำไร'] = np.where(sls>0, (df_final_d['Net_Profit']/sls)*100, 0)
+        df_final_d['% ทุนสินค้า'] = np.where(sls>0, (df_final_d['CAL_COST']/sls*100), 0)
+        df_final_d['% Ads'] = np.where(sls>0, (df_final_d['Ads_Amount']/sls*100), 0)
+        df_final_d['% กำไร'] = np.where(sls>0, (df_final_d['Net_Profit']/sls*100), 0)
         
         df_final_d = df_final_d.sort_values('กำไร/ขาดทุน', ascending=False)
 
@@ -149,7 +149,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             ('ต้นทุน', 'CAL_COST', ''), 
             ('ค่ากล่อง', 'BOX_COST', ''), 
             ('ค่าส่ง', 'DELIV_COST', ''), 
-            ('COD', 'CAL_COD_COST', ''), 
+            ('COD', 'CAL_COD_COST','col-small'), 
             ('Admin', 'CAL_COM_ADMIN', ''), 
             ('Tele', 'CAL_COM_TELESALE', ''), 
             ('ค่า Ads', 'Ads_Amount', ''), 

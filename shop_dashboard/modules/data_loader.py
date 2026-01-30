@@ -375,8 +375,15 @@ def load_data_from_db():
     m_rev_map = {
         'sku': 'SKU', 'name': 'ชื่อสินค้า', 'type': 'Type', 'cost': 'ต้นทุน',
         'box_cost': 'ราคากล่อง', 'delivery_cost': 'ค่าส่งเฉลี่ย',
-        'com_admin': 'ค่าคอมมิชชั่น Admin', 'com_tele': 'ค่าคอมมิชชั่น Telesale'
-        # Couriers...
+        'com_admin': 'ค่าคอมมิชชั่น Admin', 'com_tele': 'ค่าคอมมิชชั่น Telesale',
+        'p_jnt': 'J&T Express',
+        'p_flash': 'Flash Express',
+        'p_kerry': 'Kerry Express',
+        'p_thai_post': 'ThailandPost',
+        'p_dhl': 'DHL_1',
+        'p_spx': 'SPX Express',
+        'p_lex': 'LEX TH',
+        'p_std': 'Standard Delivery - ส่งธรรมดาในประเทศ'
     }
     df_master = df_master.rename(columns=m_rev_map)
     

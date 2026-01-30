@@ -152,7 +152,7 @@ def process_data(mode="MODE_DRIVE"):
         payment = str(row.get('วิธีการชำระเงิน', '')).lower()
         is_cod = any(cod_term in payment for cod_term in ['cod', 'ปลายทาง'])
         if is_cod and row['SHIP_PERCENT'] > 0:
-            return row['รายละเอียดยอดที่ชำระแล้ว'] * row['SHIP_PERCENT'] * 1.07
+            return row['รายละเอียดยอดที่ชำระแล้ว'] * (row['SHIP_PERCENT']/100) * 1.07
         return 0
 
     df_merged['CAL_COD_COST'] = df_merged.apply(calculate_cod_cost, axis=1)
@@ -166,8 +166,8 @@ def process_data(mode="MODE_DRIVE"):
 
     df_merged['Calculated_Role'] = df_merged.apply(calculate_role, axis=1)
 
-    com_admin = df_merged.get('ค่าคอมมิชชั่น Admin', 0).fillna(0).apply(safe_float)
-    com_tele = df_merged.get('ค่าคอมมิชชั่น Telesale', 0).fillna(0).apply(safe_float)
+    com_admin = df_merged.get('ค่าคอมมิชชั่น Admin', 0).fillna(0).apply(safe_float) /100
+    com_tele = df_merged.get('ค่าคอมมิชชั่น Telesale', 0).fillna(0).apply(safe_float) /100
 
     df_merged['CAL_COM_ADMIN'] = np.where((df_merged['Calculated_Role'] == 'Admin'), 
                                           df_merged['รายละเอียดยอดที่ชำระแล้ว'] * com_admin, 0)
