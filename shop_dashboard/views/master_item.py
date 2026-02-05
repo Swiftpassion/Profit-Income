@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from modules.data_loader import get_drive_service, SHEET_MASTER_URL
+from modules.data_loader import get_drive_service, SHEET_MASTER_URL, save_master_to_db
 from pathlib import Path
 import shutil
 
@@ -12,34 +12,88 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
     
 
     #st.markdown("---")
-    st.subheader("🔧 Master Item File (One file only: master_item.xlsx)")
-    st.info("ระบบอ่านไฟล์จาก Google Sheet ก่อนจากนั้นจะอ่าน Local File `master_item.xlsx` เพื่อใช้เป็นข้อมูลต้นทุนและค่าคอมมิชชั่น")
-    #st.info("อัปโหลดไฟล์ `master_item.xlsx` เพื่อใช้เป็นข้อมูลต้นทุนและค่าคอมมิชชั่น")
+    st.subheader("🔧 Master Item Management")
     
-    c3, c4 = st.columns([1, 1])
+    # Create Tabs for cleaner UI
+    tab_cloud, tab_local = st.tabs(["☁️ Google Sheet Sync", "📂 Upload Local File"])
     
-    with c3:
-        uploaded_master = st.file_uploader("เลือกไฟล์ Master Item (xlsx)", type=['xlsx'], key="up_master")
+    with tab_cloud:
+        st.info("💡 เชื่อมต่อข้อมูลจาก Google Sheet โดยตรง (แนะนำ)")
+        col_btn, col_blank = st.columns([1, 2])
+        with col_btn:
+            if st.button("🔄 อัปเดตข้อมูลจาก Google Sheet", type="primary", use_container_width=True):
+                with st.spinner("Fetching data from Google Sheet..."):
+                    try:
+                        creds = get_drive_service()
+                        if creds:
+                            gc = gspread.authorize(creds)
+                            try:
+                                sh = gc.open_by_url(SHEET_MASTER_URL)
+                                ws = sh.worksheet("MASTER_ITEM")
+                                data = ws.get_all_records()
+                                df_sheet = pd.DataFrame(data)
+                                
+                                # Save to Local File as backup
+                                save_path = LOCAL_DATA_DIR / "master_item.xlsx"
+                                df_sheet.to_excel(save_path, index=False)
+                                
+                                # Save to DB
+                                save_master_to_db(df_sheet)
+                                
+                                st.success("✅ Sync Master Item สำเร็จ!")
+                                st.rerun()
+                            except gspread.exceptions.APIError as api_err:
+                                st.error(f"❌ Google API Error: {api_err}")
+                            except Exception as ws_err:
+                                st.error(f"❌ ไม่พบ Worksheet หรือ URL ผิดพลาด: {ws_err}")
+                        else:
+                            st.error("⚠️ ไม่พบ Credentials ของ Google Service Account")
+                    except Exception as e:
+                        st.error(f"Failed to fetch: {e}")
+
+    with tab_local:
+        master_path = LOCAL_DATA_DIR / "master_item.xlsx"
+        # st.info("📂 อัปโหลดไฟล์ Excel (.xlsx) เพื่อใช้เป็นฐานข้อมูล Master Item")
+
+        if master_path.exists():
+            st.success(f"✅ ไฟล์ Master Item ที่ใช้: `{master_path.name}` ")
+        else:
+            st.warning("⚠️ ไฟล์ Master Item ไม่พบ")
+
+        uploaded_master = st.file_uploader("เลือกไฟล์ Master Item", type=['xlsx'], key="up_master", label_visibility="collapsed")
         if uploaded_master:
-            # Force filename to be master_item.xlsx
             save_path = LOCAL_DATA_DIR / "master_item.xlsx"
             with open(save_path, "wb") as buffer:
                 shutil.copyfileobj(uploaded_master, buffer)
-            st.success("บันทึกไฟล์ master_item.xlsx เรียบร้อยแล้ว")
-            st.rerun()
+            
+            # Sync to DB
+            try:
+                df_upload = pd.read_excel(save_path)
+                save_master_to_db(df_upload)
+                st.toast("✅ บันทึกไฟล์และอัปเดตฐานข้อมูลสำเร็จ!", icon="💾")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Saved file but failed to update DB: {e}")
 
-    with c4:
-        master_path = LOCAL_DATA_DIR / "master_item.xlsx"
-        if master_path.exists():
-            st.write(f"✅ Found: {master_path.name}")
-            if st.button("❌ Delete Master Item", key="del_master"):
-                try:
-                    os.remove(master_path)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        else:
-            st.warning("❌ Missing: master_item.xlsx")
+        # --- STATUS SECTION ---
+        st.markdown("---")
+        
+        
+        c_status, c_action = st.columns([3, 1])
+        # with c_status:
+        #     if master_path.exists():
+        #         st.success(f"✅ **Current Master File:** `{master_path.name}` (Ready)", icon="✅")
+        #     else:
+        #         st.warning("⚠️ **Status:** Master File Not Found", icon="⚠️")
+                
+        with c_action:
+            if master_path.exists():
+                if st.button("🗑️ Delete File", type="secondary", use_container_width=True, help="ลบไฟล์ Master Item ปัจจุบัน"):
+                    try:
+                        master_path.unlink()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
     # Check mode. If Local Mode, this might not work unless we have logic to edit local file or disable it.
     # if st.session_state.get("data_source_mode") == "MODE_LOCAL":
@@ -97,8 +151,8 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             # with c_info: 
             #     st.info("💡 พิมพ์ **%** ต่อท้ายได้เลย (เช่น `0.5%`)")
             
-            with c_slider:
-                table_height = st.slider("↕️ ปรับความสูงตาราง", min_value=600, max_value=2500, value=1200, step=100)
+            # with c_slider:
+            #     table_height = st.slider("↕️ ปรับความสูงตาราง", min_value=600, max_value=2500, value=1200, step=100)
             
             with c_btn:
                 st.markdown('<div style="margin-top: 0px;"></div>', unsafe_allow_html=True)
@@ -124,7 +178,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
                 df_editor_view,
                 num_rows="dynamic", 
                 use_container_width=True,
-                height=table_height,
+                height=2000,
                 key="master_editor_vertical_v1",
                 column_config=my_column_config
             )

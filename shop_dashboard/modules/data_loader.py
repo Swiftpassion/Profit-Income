@@ -282,53 +282,61 @@ def ingest_local_data_to_db():
     if master_path.exists():
          try:
             df_master = pd.read_excel(master_path, sheet_name="MASTER_ITEM")
-            # Map columns
-            # DB: sku, name, type, cost, box_cost, delivery_cost, com_admin, com_tele, p_...
-            
-            # Helper to map common names
-            m_map = {
-                'SKU': 'sku',
-                'ชื่อสินค้า': 'name',
-                'Type': 'type',
-                'ทุน': 'cost', 'ต้นทุน': 'cost',
-                'ราคากล่อง': 'box_cost',
-                'ค่าส่งเฉลี่ย': 'delivery_cost',
-                'ค่าคอมมิชชั่น Admin': 'com_admin',
-                'ค่าคอมมิชชั่น Telesale': 'com_tele',
-                'J&T Express': 'p_jnt',
-                'Flash Express': 'p_flash',
-                'Kerry Express': 'p_kerry',
-                'ThailandPost': 'p_thai_post',
-                'DHL_1': 'p_dhl',
-                'SPX Express': 'p_spx',
-                'LEX TH': 'p_lex',
-                'Standard Delivery - ส่งธรรมดาในประเทศ': 'p_std'
-            }
-            
-            df_m_db = df_master.rename(columns=m_map)
-            df_m_db.columns = [c.strip() for c in df_m_db.columns]
-            
-            valid_m_cols = ['sku', 'name', 'type', 'cost', 'box_cost', 'delivery_cost', 
-                            'com_admin', 'com_tele', 'p_jnt', 'p_flash', 'p_kerry', 
-                            'p_thai_post', 'p_dhl', 'p_spx', 'p_lex', 'p_std']
-            
-            df_m_db = df_m_db[[c for c in df_m_db.columns if c in valid_m_cols]]
-            
-            # Clean numeric
-            for c in df_m_db.columns:
-                if c not in ['sku', 'name', 'type']:
-                    df_m_db[c] = pd.to_numeric(df_m_db[c].astype(str).str.replace(',','').str.replace('%',''), errors='coerce').fillna(0)
-                    # Handle % inputs? If value > 1 assumed not percent? Logic says if % is present... 
-                    # The `safe_float` logic in processing handled %.
-                    # Here we just blindly strip %.
-            
-            with engine.begin() as conn:
-                conn.execute(text("TRUNCATE TABLE master_item;"))
-            
-            df_m_db.to_sql('master_item', engine, if_exists='append', index=False)
+            save_master_to_db(df_master, engine)
             
          except Exception as e:
              print(f"Error ingest master: {e}")
+
+def save_master_to_db(df_master, engine=None):
+    """Saves Master Item DataFrame to Database."""
+    if engine is None: engine = get_engine()
+    
+    try:
+        # Map columns
+        # DB: sku, name, type, cost, box_cost, delivery_cost, com_admin, com_tele, p_...
+        
+        # Helper to map common names
+        m_map = {
+            'SKU': 'sku',
+            'ชื่อสินค้า': 'name',
+            'Type': 'type',
+            'ทุน': 'cost', 'ต้นทุน': 'cost',
+            'ราคากล่อง': 'box_cost',
+            'ค่าส่งเฉลี่ย': 'delivery_cost',
+            'ค่าคอมมิชชั่น Admin': 'com_admin',
+            'ค่าคอมมิชชั่น Telesale': 'com_tele',
+            'J&T Express': 'p_jnt',
+            'Flash Express': 'p_flash',
+            'Kerry Express': 'p_kerry',
+            'ThailandPost': 'p_thai_post',
+            'DHL_1': 'p_dhl',
+            'SPX Express': 'p_spx',
+            'LEX TH': 'p_lex',
+            'Standard Delivery - ส่งธรรมดาในประเทศ': 'p_std'
+        }
+        
+        df_m_db = df_master.rename(columns=m_map)
+        df_m_db.columns = [c.strip() for c in df_m_db.columns]
+        
+        valid_m_cols = ['sku', 'name', 'type', 'cost', 'box_cost', 'delivery_cost', 
+                        'com_admin', 'com_tele', 'p_jnt', 'p_flash', 'p_kerry', 
+                        'p_thai_post', 'p_dhl', 'p_spx', 'p_lex', 'p_std']
+        
+        df_m_db = df_m_db[[c for c in df_m_db.columns if c in valid_m_cols]]
+        
+        # Clean numeric
+        for c in df_m_db.columns:
+            if c not in ['sku', 'name', 'type']:
+                df_m_db[c] = pd.to_numeric(df_m_db[c].astype(str).str.replace(',','').str.replace('%',''), errors='coerce').fillna(0)
+        
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE master_item;"))
+        
+        df_m_db.to_sql('master_item', engine, if_exists='append', index=False)
+        return True
+    except Exception as e:
+        print(f"Error saving master to DB: {e}")
+        raise e
 
 def load_data_from_db():
     """Fetches RAW data from Database (for legacy compatibility)."""

@@ -98,7 +98,7 @@ try:
             if "Unknown" in all_shops: all_shops.remove("Unknown")
             
             with st.sidebar:
-                st.markdown("### 🏪 รู้านค้า (Shops)")
+                st.markdown("### 🏪 ร้านค้า (Shops)")
                 # Default selects all
                 if "selected_shops" not in st.session_state:
                     st.session_state.selected_shops = all_shops
