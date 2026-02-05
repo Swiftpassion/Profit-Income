@@ -3,7 +3,9 @@ try:
     import modules.auth as auth
     import modules.ui_components as ui
     from modules.processing import process_data
-    from modules.data_loader import FOLDER_ID_DATA, FOLDER_ID_ADS, SHEET_MASTER_URL
+    from modules.data_loader import FOLDER_ID_DATA, FOLDER_ID_ADS, SHEET_MASTER_URL, get_drive_service, save_master_to_db
+    import gspread
+    import pandas as pd
 
     # --- PAGES ---
     import views.report_month as p_month
@@ -67,6 +69,24 @@ try:
         
         if st.button("🔄 รีเฟรชข้อมูลล่าสุด", use_container_width=True):
             st.cache_data.clear()
+            
+            # --- Auto-fetch Master Item from Google Sheet on Refresh ---
+            try:
+                with st.spinner("Syncing Master Item from Google Sheet..."):
+                    creds = get_drive_service()
+                    if creds:
+                        gc = gspread.authorize(creds)
+                        sh = gc.open_by_url(SHEET_MASTER_URL)
+                        ws = sh.worksheet("MASTER_ITEM")
+                        data = ws.get_all_records()
+                        df_sheet = pd.DataFrame(data)
+                        save_master_to_db(df_sheet)
+                        st.toast("✅ Updated Master Item from Google Sheet", icon="☁️")
+            except Exception as e:
+                # Non-blocking error, just warn
+                print(f"Auto-sync error: {e}")
+                # st.toast(f"⚠️ Auto-sync failed: {e}") 
+
             st.rerun()
         
         st.link_button("📊 ชีทตั้งค่าทุนสินค้า", SHEET_MASTER_URL, use_container_width=True)
