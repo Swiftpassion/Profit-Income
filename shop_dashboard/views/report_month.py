@@ -199,8 +199,9 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
 
         for sku in final_skus:
             val = footer_sums.loc[sku, 'Net_Profit']
+            val_pct = footer_sums.loc[sku, 'Net_Profit']/footer_sums.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว'] *100
             c_sku = "#7CFC00" if val >= 0 else "#FF0000"
-            html += f'<td style="background-color: {bg_total}; color: {c_sku};">{fmt_n(val)}</td>'
+            html += f'<td style="background-color: {bg_total}; color: {c_sku};">{fmt_n(val)} <span style="font-style: italic;">({fmt_p(val_pct)})</span></td>'
         html += '</tr>'
         
         def create_footer_row_new(row_cls, label, data_dict, show_pct=False, dark_bg=False):
@@ -229,7 +230,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             txt_val_display = fmt_n(grand_val)
             if show_pct and g_sales > 0:
                 pct = (grand_val / g_sales * 100)
-                txt_val_display += f' <span style="font-size:0.85em">({fmt_p(pct)})</span>'
+                txt_val_display += f' <span style="font-style: italic;">({fmt_p(pct)})</span>'
 
             # --- Label + Grand Total Cells ---
             # fix-m-1: Label
@@ -268,9 +269,9 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
                 txt_cell = fmt_n(val)
                 if show_pct and s > 0:
                     pct = (val / s * 100)
-                    txt_cell = f'{fmt_n(val)} <span style="font-size:0.75em">({fmt_p(pct)})</span>'
+                    txt_cell = f'{fmt_n(val)} <span style="font-style: italic;">({fmt_p(pct)})</span>'
                 elif show_pct:
-                    txt_cell = f'{fmt_n(val)} <span style="font-size:0.75em">(-)</span>'
+                    txt_cell = f'{fmt_n(val)} <span style="font-style: italic;">(-)</span>'
 
                 cell_text_col = "#ffffff" if dark_bg else "#333333"
                 if val < 0: cell_text_col = "#FF0000" # Override for negative values if needed, but white bg usually handles it. 
