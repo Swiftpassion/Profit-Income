@@ -329,6 +329,13 @@ def save_master_to_db(df_master, engine=None):
             if c not in ['sku', 'name', 'type']:
                 df_m_db[c] = pd.to_numeric(df_m_db[c].astype(str).str.replace(',','').str.replace('%',''), errors='coerce').fillna(0)
         
+        # Clean SKU: remove rows with empty/null SKU (primary key cannot be blank)
+        df_m_db['sku'] = df_m_db['sku'].astype(str).str.strip()
+        df_m_db = df_m_db[df_m_db['sku'].ne('') & df_m_db['sku'].ne('nan') & df_m_db['sku'].notna()]
+        
+        # Drop duplicate SKUs, keep first occurrence
+        df_m_db = df_m_db.drop_duplicates(subset=['sku'], keep='first')
+        
         with engine.begin() as conn:
             conn.execute(text("TRUNCATE TABLE master_item;"))
         
