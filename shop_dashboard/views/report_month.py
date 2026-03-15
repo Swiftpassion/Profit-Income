@@ -199,7 +199,8 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
 
         for sku in final_skus:
             val = footer_sums.loc[sku, 'Net_Profit']
-            val_pct = footer_sums.loc[sku, 'Net_Profit']/footer_sums.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว'] *100
+            sales = footer_sums.loc[sku, 'รายละเอียดยอดที่ชำระแล้ว']
+            val_pct = (val / sales * 100) if sales != 0 else 0
             c_sku = "#7CFC00" if val >= 0 else "#FF0000"
             html += f'<td style="background-color: {bg_total}; color: {c_sku};">{fmt_n(val)} <span style="font-style: italic;">({fmt_p(val_pct)})</span></td>'
         html += '</tr>'
