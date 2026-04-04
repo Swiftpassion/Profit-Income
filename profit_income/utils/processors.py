@@ -4,6 +4,21 @@ import os
 from utils.data_helpers import find_header_row, get_col_data
 from utils.common import clean_date, clean_text, clean_scientific_notation
 
+def _find_sheet(data_io, preferred_names, fallback=0):
+    """Return the first matching sheet name (case-insensitive), or fallback index."""
+    try:
+        data_io.seek(0)
+        xl = pd.ExcelFile(data_io)
+        sheets_lower = {s.lower(): s for s in xl.sheet_names}
+        for name in preferred_names:
+            if name.lower() in sheets_lower:
+                data_io.seek(0)
+                return sheets_lower[name.lower()]
+    except Exception:
+        pass
+    data_io.seek(0)
+    return fallback
+
 def process_tiktok(order_files, income_files, shop_name):
     # --- Helper to load income ---
     def load_tiktok_income(inc_files):
@@ -19,35 +34,32 @@ def process_tiktok(order_files, income_files, shop_name):
                             except UnicodeDecodeError:
                                 data.seek(0); df = pd.read_csv(data, encoding='cp874', dtype=str)
                         else:
-                            header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission'])
+                            # TikTok income is in 'Order details' sheet (first sheet)
+                            income_sheet = _find_sheet(data, ['Order details', 'order details'])
+                            header_idx = find_header_row(data, ['Order ID', 'Settlement Amount', 'Affiliate Commission', 'Order/adjustment ID'], sheet_name=income_sheet)
                             data.seek(0)
-                            df = pd.read_excel(data, header=header_idx, dtype=str)
-                        
+                            df = pd.read_excel(data, sheet_name=income_sheet, header=header_idx, dtype=str)
+
                         inc = pd.DataFrame()
-                        # Added Order/adjustment ID for new format
                         oid = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ', 'Order/adjustment ID'])
                         if oid is None: continue
                         inc['order_id'] = oid
-                        
-                        # Added Total settlement amount
+
                         settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ', 'Total settlement amount'])
                         inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
-                        
+
                         aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น'])
                         inc['affiliate'] = pd.to_numeric(aff, errors='coerce').fillna(0)
-                        
+
                         fee = get_col_data(df, ['Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม', 'Total Fees'])
                         inc['fees'] = pd.to_numeric(fee, errors='coerce').fillna(0)
-                        
-                        # Filter out invalid rows from income too just in case
-                        # inc = inc[~inc['order_id'].astype(str).str.contains('Platform', na=False)]
-                        
+
                         inc['order_id'] = inc['order_id'].astype(str).apply(clean_scientific_notation)
                         income_dfs.append(inc)
                 except Exception as e:
                     print(f"Error loading income {filename}: {e}")
                     continue
-        
+
         if income_dfs:
             combined_inc = pd.concat(income_dfs, ignore_index=True)
             return combined_inc.groupby('order_id')[['settlement_amount', 'affiliate', 'fees']].sum().reset_index()
@@ -67,10 +79,12 @@ def process_tiktok(order_files, income_files, shop_name):
                         try: data.seek(0); df = pd.read_csv(data, dtype=str)
                         except UnicodeDecodeError: data.seek(0); df = pd.read_csv(data, encoding='cp874', dtype=str)
                     else:
-                        header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Product Name'])
+                        # TikTok orders are in 'OrderSKUList' sheet
+                        order_sheet = _find_sheet(data, ['OrderSKUList', 'Order SKU List', 'orders'])
+                        header_idx = find_header_row(data, ['Order ID', 'Seller SKU', 'Product Name'], sheet_name=order_sheet)
                         data.seek(0)
-                        df = pd.read_excel(data, header=header_idx, dtype=str)
-                    
+                        df = pd.read_excel(data, sheet_name=order_sheet, header=header_idx, dtype=str)
+
                     extracted = pd.DataFrame()
                     oid = get_col_data(df, ['Order ID', 'หมายเลขคำสั่งซื้อ', 'Order Serial No.'])
                     if oid is None: continue
@@ -89,10 +103,10 @@ def process_tiktok(order_files, income_files, shop_name):
 
                     extracted['created_date'] = get_col_data(df, ['Created Time', 'เวลาที่สร้าง'])
                     extracted['shipped_date'] = get_col_data(df, ['Shipped Time', 'เวลาจัดส่ง', 'RTS Time'])
-                    
+
                     track = get_col_data(df, ['Tracking ID', 'หมายเลขติดตามพัสดุ'])
                     extracted['tracking_id'] = track if track is not None else '-'
-                    
+
                     pname = get_col_data(df, ['Product Name', 'ชื่อสินค้า'])
                     extracted['product_name'] = pname if pname is not None else '-'
 
@@ -101,11 +115,11 @@ def process_tiktok(order_files, income_files, shop_name):
 
                     extracted = clean_date(extracted, 'created_date')
                     extracted = clean_date(extracted, 'shipped_date')
-                    
+
                     # Clean Order ID and filter garbage
                     extracted['order_id'] = extracted['order_id'].astype(str).apply(clean_scientific_notation)
                     extracted = extracted[~extracted['order_id'].str.contains('Platform', case=False, na=False)]
-                    
+
                     extracted = clean_text(extracted, 'sku')
                     all_orders.append(extracted)
 
@@ -115,7 +129,7 @@ def process_tiktok(order_files, income_files, shop_name):
 
     if not all_orders: return pd.DataFrame()
     final_orders = pd.concat(all_orders, ignore_index=True)
-    
+
     # --- Merge with Income Data ---
     if not income_master.empty:
         final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
@@ -140,24 +154,25 @@ def process_shopee(order_files, income_files, shop_name):
         if any(x in filename.lower() for x in ['xls', 'xlsx']):
             try:
                 with open(f_path, 'rb') as data:
-                    header_idx = find_header_row(data, ['หมายเลขคำสั่งซื้อ', 'Order ID'], sheet_name='Income')
+                    income_sheet = _find_sheet(data, ['Income', 'income'])
+                    header_idx = find_header_row(data, ['หมายเลขคำสั่งซื้อ', 'Order ID', 'จำนวนเงินทั้งหมดที่โอนแล้ว', 'Payout Amount'], sheet_name=income_sheet)
                     data.seek(0)
-                    df = pd.read_excel(data, sheet_name='Income', header=header_idx, dtype=str)
-                    
+                    df = pd.read_excel(data, sheet_name=income_sheet, header=header_idx, dtype=str)
+
                     inc = pd.DataFrame()
                     inc['order_id'] = get_col_data(df, ['หมายเลขคำสั่งซื้อ', 'Order ID'])
-                    inc['settlement_date'] = get_col_data(df, ['วันที่โอนชำระเงินสำเร็จ', 'Payout Completed Date'])
-                    inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)', 'Payout Amount']), errors='coerce')
-                    inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price']), errors='coerce')
-                    inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น', 'Commission Fee']), errors='coerce') 
-                    
+                    inc['settlement_date'] = get_col_data(df, ['วันที่โอนชำระเงินสำเร็จ', 'Payout Completed Date', 'วันที่ปรับปรุงเข้ายอดของฉัน'])
+                    inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)', 'จำนวนเงินทั้งหมดที่โอนแล้ว', 'Payout Amount', 'Total Payout']), errors='coerce')
+                    inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price', 'ราคาตั้งต้น']), errors='coerce')
+                    inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น', 'Commission Fee', 'ค่าคอมมิชชั่น AMS']), errors='coerce')
+
                     if not inc.empty and 'order_id' in inc.columns:
                         inc['fees'] = (inc['original_price'].fillna(0) - inc['settlement_amount'].fillna(0))
                         inc = clean_date(inc, 'settlement_date')
                         inc['order_id'] = inc['order_id'].apply(clean_scientific_notation)
                         income_dfs.append(inc)
             except: pass
-    
+
     income_master = pd.concat(income_dfs, ignore_index=True).drop_duplicates(subset=['order_id']) if income_dfs else pd.DataFrame()
 
     # --- Shopee Orders ---
@@ -169,36 +184,36 @@ def process_shopee(order_files, income_files, shop_name):
                     header_idx = find_header_row(data, ['หมายเลขคำสั่งซื้อ', 'Order ID'])
                     data.seek(0)
                     df = pd.read_excel(data, header=header_idx, dtype=str)
-                    
+
                     ext = pd.DataFrame()
                     oid = get_col_data(df, ['หมายเลขคำสั่งซื้อ', 'Order ID'])
                     if oid is None: continue
-                    
+
                     ext['order_id'] = oid
                     ext['status'] = get_col_data(df, ['สถานะการสั่งซื้อ', 'Order Status'])
                     ext['sku'] = get_col_data(df, ['เลขอ้างอิง SKU (SKU Reference No.)', 'SKU Reference No.'])
                     ext['quantity'] = pd.to_numeric(get_col_data(df, ['จำนวน', 'Quantity']), errors='coerce').fillna(1)
-                    ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['ราคาขายสุทธิ', 'Net Price', 'ราคาต่อหน่วย']), errors='coerce').fillna(0)
-                    ext['tracking_id'] = get_col_data(df, ['หมายเลขติดตามพัสดุ', 'Tracking Number*'])
+                    ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['ราคาขายสุทธิ', 'Net Price', 'ราคาต่อหน่วย', 'ราคาขาย', 'ยอดชำระเงิน', 'ราคาสินค้าที่ชำระโดยผู้ซื้อ (THB)']), errors='coerce').fillna(0)
+                    ext['tracking_id'] = get_col_data(df, ['หมายเลขติดตามพัสดุ', 'Tracking Number*', '*หมายเลขติดตามพัสดุ'])
                     ext['created_date'] = get_col_data(df, ['วันที่ทำการสั่งซื้อ', 'Order Creation Date'])
                     ext['shipped_date'] = get_col_data(df, ['เวลาการชำระสินค้า', 'Payment Time'])
                     ext['product_name'] = get_col_data(df, ['ชื่อสินค้า', 'Product Name'])
 
                     ext['shop_name'] = shop_name
                     ext['platform'] = 'SHOPEE'
-                    
+
                     ext = clean_date(ext, 'created_date')
                     ext = clean_date(ext, 'shipped_date')
                     ext['order_id'] = ext['order_id'].apply(clean_scientific_notation)
                     ext = clean_text(ext, 'sku')
-                    
+
                     all_orders.append(ext)
             except Exception as e:
                 st.error(f"❌ Shopee {filename}: {e}")
 
     if not all_orders: return pd.DataFrame()
     final = pd.concat(all_orders, ignore_index=True)
-    
+
     if not income_master.empty:
         return pd.merge(final, income_master, on='order_id', how='left')
     return final
@@ -213,19 +228,20 @@ def process_lazada(order_files, income_files, shop_name):
         if any(ext in filename.lower() for ext in ['xlsx', 'xls']):
             try:
                 with open(f_path, 'rb') as data:
-                    header_idx = find_header_row(data, ['Order No.', 'หมายเลขคำสั่งซื้อ', 'Transaction Date', 'วันที่ทำรายการ'])
+                    income_sheet = _find_sheet(data, ['Income Overview', 'income overview', 'Income', 'Sheet1'])
+                    header_idx = find_header_row(data, ['Order No.', 'หมายเลขคำสั่งซื้อ', 'Transaction Date', 'วันที่ทำรายการ', 'Amount', 'จำนวนเงิน', 'Fee Name'], sheet_name=income_sheet)
                     data.seek(0)
-                    df = pd.read_excel(data, header=header_idx, dtype=str)
-                    
+                    df = pd.read_excel(data, sheet_name=income_sheet, header=header_idx, dtype=str)
+
                     inc = pd.DataFrame()
-                    oid = get_col_data(df, ['Order No.', 'หมายเลขคำสั่งซื้อ', 'Order ID'])
-                    if oid is None: continue 
+                    oid = get_col_data(df, ['Order No.', 'หมายเลขคำสั่งซื้อ', 'Order ID', 'orderNumber'])
+                    if oid is None: continue
                     inc['order_id'] = oid
-                    
-                    inc['settlement_date'] = get_col_data(df, ['Transaction Date', 'วันที่ทำรายการ'])
-                    amt_col = get_col_data(df, ['Amount (incl. VAT)', 'Amount', 'จำนวนเงิน(รวมภาษี)'])
+
+                    inc['settlement_date'] = get_col_data(df, ['Transaction Date', 'วันที่ทำรายการ', 'วันที่สร้างคำสั่งซื้อ'])
+                    amt_col = get_col_data(df, ['Amount (incl. VAT)', 'Amount', 'จำนวนเงิน(รวมภาษี)', 'จำนวนเงิน'])
                     inc['settlement_amount'] = pd.to_numeric(amt_col, errors='coerce').fillna(0)
-                    
+
                     inc['order_id'] = inc['order_id'].apply(clean_scientific_notation)
                     income_dfs.append(inc)
             except: pass
@@ -241,34 +257,35 @@ def process_lazada(order_files, income_files, shop_name):
         income_master = clean_date(income_master, 'settlement_date')
         income_master['original_price'] = 0
         income_master['affiliate'] = 0
-        
+
     # --- Lazada Orders ---
     for f_path in order_files:
         filename = os.path.basename(f_path)
         if any(ext in filename.lower() for ext in ['xlsx', 'xls']):
             try:
                 with open(f_path, 'rb') as data:
-                    header_idx = find_header_row(data, ['Order Item Id', 'orderNumber', 'หมายเลขคำสั่งซื้อ'])
+                    order_sheet = _find_sheet(data, ['sheet1', 'Sheet1', 'orders', 'Orders'])
+                    header_idx = find_header_row(data, ['orderItemId', 'orderNumber', 'หมายเลขคำสั่งซื้อ', 'sellerSku'], sheet_name=order_sheet)
                     data.seek(0)
-                    df = pd.read_excel(data, header=header_idx, dtype=str)
-                    
+                    df = pd.read_excel(data, sheet_name=order_sheet, header=header_idx, dtype=str)
+
                     ext = pd.DataFrame()
                     oid = get_col_data(df, ['orderNumber', 'หมายเลขคำสั่งซื้อ', 'Order Number'])
                     if oid is None: continue
-                    
+
                     ext['order_id'] = oid
                     ext['status'] = get_col_data(df, ['status', 'สถานะ'])
                     ext['sku'] = get_col_data(df, ['sellerSku', 'Seller SKU', 'รหัสสินค้าของร้านค้า'])
                     ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['paidPrice', 'ราคาที่ชำระ', 'Paid Price']), errors='coerce').fillna(0)
                     ext['tracking_id'] = get_col_data(df, ['trackingCode', 'Tracking Code', 'รหัสติดตามพัสดุ'])
                     ext['created_date'] = get_col_data(df, ['createTime', 'Created at', 'เวลาที่สั่งซื้อ'])
-                    ext['shipped_date'] = get_col_data(df, ['updateTime', 'Updated at', 'เวลาที่ปรับปรุงล่าสุด']) 
+                    ext['shipped_date'] = get_col_data(df, ['updateTime', 'Updated at', 'เวลาที่ปรับปรุงล่าสุด'])
                     ext['product_name'] = get_col_data(df, ['itemName', 'Item Name', 'ชื่อสินค้า'])
-                    
-                    ext['quantity'] = 1 
+
+                    ext['quantity'] = 1
                     ext['shop_name'] = shop_name
                     ext['platform'] = 'LAZADA'
-                    
+
                     ext = clean_date(ext, 'created_date')
                     ext = clean_date(ext, 'shipped_date')
                     ext['order_id'] = ext['order_id'].apply(clean_scientific_notation)
@@ -279,7 +296,7 @@ def process_lazada(order_files, income_files, shop_name):
 
     if not all_orders: return pd.DataFrame()
     final_orders = pd.concat(all_orders, ignore_index=True)
-    
+
     if not income_master.empty:
         final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
         income_master['order_id'] = income_master['order_id'].astype(str).str.strip()

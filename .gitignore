@@ -36,3 +36,5 @@ debug_tiktok_data.py
 *.db
 *.sqlite3
 *.sqlite
+
+profit_income/Samples/

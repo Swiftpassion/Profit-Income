@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 
 def find_header_row(data_io, required_keywords, sheet_name=0):
@@ -18,10 +19,18 @@ def find_header_row(data_io, required_keywords, sheet_name=0):
         data_io.seek(0)
         return 0
 
+def _norm_col(s):
+    """Normalize column name: lowercase, collapse whitespace, strip leading/trailing symbols."""
+    s = " ".join(str(s).replace('\n', ' ').split()).lower()
+    # Strip leading/trailing non-alphanumeric, non-Thai symbols (*, #, (, ), etc.)
+    s = re.sub(r'^[^\w\u0E00-\u0E7F]+', '', s)
+    s = re.sub(r'[^\w\u0E00-\u0E7F]+$', '', s)
+    return s.strip()
+
 def get_col_data(df, candidates):
-    cols_norm = [" ".join(str(c).replace('\n', ' ').split()).lower() for c in df.columns]
+    cols_norm = [_norm_col(c) for c in df.columns]
     for cand in candidates:
-        cand_clean = " ".join(cand.split()).lower()
+        cand_clean = _norm_col(cand)
         if cand_clean in cols_norm:
             idx = cols_norm.index(cand_clean)
             return df.iloc[:, idx]
