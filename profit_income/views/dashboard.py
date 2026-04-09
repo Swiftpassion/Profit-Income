@@ -3,7 +3,7 @@ import pandas as pd
 import datetime
 import calendar
 from datetime import date
-from utils.db_service import fetch_orders, fetch_ads
+from utils.db_service import fetch_orders, fetch_ads, get_all_shops
 from utils.common import format_thai_date
 
 def render_dashboard():
@@ -54,41 +54,40 @@ def render_dashboard():
         ads_db = pd.DataFrame()
 
         # --- SHOP SELECTION ---
-        all_shops = set()
-        if not raw_df.empty and 'shop_name' in raw_df.columns:
-            all_shops.update(raw_df['shop_name'].dropna().unique())
-        if not ads_all.empty and 'shop_name' in ads_all.columns:
-            all_shops.update(ads_all['shop_name'].dropna().unique())
-        
-        sorted_shops = sorted(list(all_shops))
+        # ใช้ shops table เป็น source of truth แทนการดึงจาก order data
+        shops_df = get_all_shops()
+        if not shops_df.empty:
+            # กรองตาม platform ที่เลือก
+            filtered_shops_df = shops_df[shops_df['platform'].isin(sel_plats)]
+            sorted_shops = sorted(filtered_shops_df['shop_name'].dropna().unique().tolist())
+        else:
+            sorted_shops = []
 
         st.markdown("##### 🏪 เลือกร้านค้า (Shop Name)")
-        
-        # Container for Select All button and Multiselect
+
         col_shop_sel, col_shop_btn = st.columns([5, 1])
-        
-        # Logic for Select All
-        if 'selected_shops' not in st.session_state:
+
+        # Sync session state: เมื่อ sorted_shops เปลี่ยน (platform เปลี่ยน/ร้านใหม่) ให้ reset เป็นเลือกทั้งหมด
+        prev_shops_key = f"_prev_sorted_shops"
+        if st.session_state.get(prev_shops_key) != sorted_shops:
             st.session_state.selected_shops = sorted_shops
+            st.session_state[prev_shops_key] = sorted_shops
 
         def select_all_shops():
             st.session_state.selected_shops = sorted_shops
-        
+
         with col_shop_btn:
-             if st.button("✅ เลือกทั้งหมด", on_click=select_all_shops, use_container_width=True):
-                 pass
+            st.button("✅ เลือกทั้งหมด", on_click=select_all_shops, use_container_width=True)
 
         with col_shop_sel:
             selected_shops = st.multiselect(
-                "Filter Shop", 
-                sorted_shops, 
+                "Filter Shop",
+                sorted_shops,
                 default=st.session_state.selected_shops,
                 key="shop_multiselect",
                 label_visibility="collapsed"
             )
-            # Sync session state if user manually changes multiselect
-            if selected_shops != st.session_state.selected_shops:
-                 st.session_state.selected_shops = selected_shops
+            st.session_state.selected_shops = selected_shops
 
         
         if not ads_all.empty:
