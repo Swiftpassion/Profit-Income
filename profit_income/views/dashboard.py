@@ -26,7 +26,8 @@ def render_dashboard():
             st.session_state.d_end = date(y, m_idx, days)
         except: pass
 
-    with col_filters[0]: st.selectbox("ปี", [2024, 2025, 2026], index=1, key="sel_year", on_change=update_dates)
+    year_opts = [today.year - 2, today.year - 1, today.year]
+    with col_filters[0]: st.selectbox("ปี", year_opts, index=2, key="sel_year", on_change=update_dates)
     with col_filters[1]: st.selectbox("เดือน", thai_months, index=today.month-1, key="sel_month", on_change=update_dates)
     with col_filters[2]: st.session_state.d_start = st.date_input("วันที่เริ่ม", st.session_state.d_start)
     with col_filters[3]: st.session_state.d_end = st.date_input("ถึงวันที่", st.session_state.d_end)
