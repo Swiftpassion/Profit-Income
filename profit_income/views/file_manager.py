@@ -3,9 +3,65 @@ import os
 import pandas as pd
 import datetime
 from utils.local_file_manager import list_local_files, save_uploaded_file, delete_file, get_file_info
-from utils.db_service import save_orders, get_product_costs, get_all_shops, add_shop, delete_shop
+from utils.db_service import save_orders, get_product_costs, get_all_shops, add_shop, delete_shop, upsert_new_skus
 from utils.processors import process_tiktok, process_shopee, process_lazada
-from utils.common import get_standard_status
+from utils.data_helpers import find_header_row, get_col_data
+from utils.common import get_standard_status, clean_text
+
+# SKU candidates per platform (ต้องตรงกับที่ processors.py ใช้)
+_SKU_CANDIDATES = {
+    'TIKTOK': ['Seller SKU', 'รหัสสินค้าของผู้ขาย', 'SKU ID'],
+    'SHOPEE': ['เลขอ้างอิง SKU (SKU Reference No.)', 'SKU Reference No.', 'เลขอ้างอิง SKU'],
+    'LAZADA': ['sellerSku', 'Seller SKU', 'รหัสสินค้าของร้านค้า'],
+}
+_SHEET_HINTS = {
+    'TIKTOK': ['OrderSKUList', 'Order SKU List'],
+    'SHOPEE': ['orders'],
+    'LAZADA': ['sheet1', 'Sheet1'],
+}
+_HEADER_HINTS = {
+    'TIKTOK': ['Order ID', 'Seller SKU', 'Product Name'],
+    'SHOPEE': ['หมายเลขคำสั่งซื้อ', 'Order ID'],
+    'LAZADA': ['orderItemId', 'orderNumber', 'sellerSku'],
+}
+
+def _extract_skus_from_file(uploaded_file, platform):
+    """อ่าน SKU ที่ไม่ซ้ำจากไฟล์ order ที่อัปโหลด"""
+    from utils.processors import _find_sheet
+    import io
+    skus = []
+    try:
+        raw = uploaded_file.read()
+        uploaded_file.seek(0)
+        fname = uploaded_file.name.lower()
+        buf = io.BytesIO(raw)
+
+        if 'csv' in fname:
+            try:
+                df = pd.read_csv(buf, dtype=str)
+            except UnicodeDecodeError:
+                buf.seek(0)
+                df = pd.read_csv(buf, encoding='cp874', dtype=str)
+        else:
+            sheet = _find_sheet(buf, _SHEET_HINTS.get(platform, []))
+            header_idx = find_header_row(buf, _HEADER_HINTS.get(platform, []), sheet_name=sheet)
+            buf.seek(0)
+            df = pd.read_excel(buf, sheet_name=sheet, header=header_idx, dtype=str)
+
+        sku_col = get_col_data(df, _SKU_CANDIDATES.get(platform, []))
+        if sku_col is not None:
+            cleaned = sku_col.astype(str).str.strip().str.upper()
+            # กรอง: ค่าว่าง, null placeholder, และ description rows (มีช่องว่าง > 3 = ประโยค ไม่ใช่ SKU)
+            skus = (
+                cleaned
+                .replace({'NAN': None, 'NONE': None, '-': None, '': None})
+                .dropna()
+                .loc[lambda s: s.str.count(' ') <= 3]  # SKU จริงมีช่องว่างน้อย
+                .unique().tolist()
+            )
+    except Exception:
+        pass
+    return skus
 
 def render_file_manager():
     st.header("📂 จัดการไฟล์และซิงค์ข้อมูล")
@@ -207,11 +263,18 @@ def render_file_manager():
                 if uploaded_orders:
                     if st.button("บันทึก Orders", type="primary", key="btn_save_orders"):
                         count = 0
+                        all_new_skus = set()
                         for uf in uploaded_orders:
+                            # extract SKUs before saving (seek resets after read)
+                            new_skus = _extract_skus_from_file(uf, platform)
+                            all_new_skus.update(new_skus)
                             save_uploaded_file(uf, platform, 'Orders', shop_name)
                             count += 1
-                        st.success(f"บันทึกไฟล์สำเร็จ {count} ไฟล์!")
-                        
+
+                        # Upsert new SKUs with default cost=1
+                        added = upsert_new_skus(list(all_new_skus), platform)
+                        st.success(f"บันทึกไฟล์สำเร็จ {count} ไฟล์! เพิ่ม SKU ใหม่ {added} รายการ (ต้นทุนเริ่มต้น 1 บาท)")
+
                         # Reset uploader by changing key
                         st.session_state["upl_orders_key"] += 1
                         st.rerun()

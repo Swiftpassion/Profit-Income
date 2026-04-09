@@ -3,21 +3,29 @@ import pandas as pd
 import datetime
 import calendar
 from datetime import date
-from utils.db_service import fetch_ads, save_ads
+from utils.db_service import fetch_ads, save_ads, get_all_shops
 
 def render_ads():
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     today = datetime.datetime.now().date()
-    
+
     st.header("📢 บันทึกค่าโฆษณา (ADS)")
-    
-    # Shop Selector
-    shops_list = [
-        'TIKTOK 1', 'TIKTOK 2', 'TIKTOK 3',
-        'SHOPEE 1', 'SHOPEE 2', 'SHOPEE 3',
-        'LAZADA 1', 'LAZADA 2', 'LAZADA 3'
-    ]
-    shop_selected = st.selectbox("เลือกร้านค้า", shops_list, key="ads_shop_select")
+
+    # Shop Selector — ดึงจาก DB เหมือน file_manager
+    shops_df = get_all_shops()
+    if shops_df.empty:
+        st.warning("ยังไม่มีร้านค้าในระบบ กรุณาเพิ่มร้านค้าที่เมนู 'จัดการไฟล์ & Sync' ก่อน")
+        return
+
+    shops_list = (shops_df['platform'] + ' - ' + shops_df['shop_name']).tolist() \
+        if 'platform' in shops_df.columns else shops_df['shop_name'].tolist()
+    shop_display = st.selectbox("เลือกร้านค้า", shops_list, key="ads_shop_select")
+
+    # แยก shop_name จริงออกมา (ตัด "PLATFORM - " prefix ออก)
+    if ' - ' in shop_display:
+        shop_selected = shop_display.split(' - ', 1)[1]
+    else:
+        shop_selected = shop_display
 
     col_filters_ads = st.columns([1, 1, 1, 1])
     with col_filters_ads[0]: 
@@ -63,18 +71,20 @@ def render_ads():
         st.info(f"📅 {shop_selected} : {d_start_ads.strftime('%d/%m/%Y')} - {d_end_ads.strftime('%d/%m/%Y')}")
 
     st.markdown("##### 📝 กรอกข้อมูลลงในตารางด้านล่าง")
+    # key ต้องเปลี่ยนตามร้านและช่วงวันที่เพื่อให้ editor reset เมื่อเปลี่ยนร้าน
+    editor_key = f"ads_editor_{shop_selected}_{d_start_ads}_{d_end_ads}"
     edited_df = st.data_editor(
-        pd.DataFrame(editor_data), 
+        pd.DataFrame(editor_data),
         column_config={
-            "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True), 
-            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100), 
+            "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
+            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100),
             "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)
-        }, 
-        hide_index=True, 
-        num_rows="fixed", 
-        use_container_width=True, 
-        height=1200, 
-        key="ads_editor_tab"
+        },
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        height=1200,
+        key=editor_key
     )
 
     if save_ads_clicked:

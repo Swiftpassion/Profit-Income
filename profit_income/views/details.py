@@ -21,9 +21,9 @@ def render_details():
         
         if not raw_df.empty:
             raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
-            # Secondary filter just in case of timezone/timestamp edge cases
-            mask = (raw_df['created_date'] >= d_start_det) & (raw_df['created_date'] <= d_end_det)
-            df = raw_df.loc[mask].copy()
+            # Keep rows where created_date is in range OR is null (null = date parse failed, don't hide)
+            in_range = (raw_df['created_date'] >= d_start_det) & (raw_df['created_date'] <= d_end_det)
+            df = raw_df.loc[in_range | raw_df['created_date'].isna()].copy()
             
             if df.empty:
                 st.info(f"ไม่พบข้อมูล {selected_platform} ในช่วงวันที่เลือก")

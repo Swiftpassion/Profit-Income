@@ -98,11 +98,11 @@ def fetch_orders(platform=None, start_date=None, end_date=None):
         params['platform'] = platform
     
     if start_date:
-        query += " AND created_date >= %(start_date)s"
+        query += " AND (created_date >= %(start_date)s OR created_date IS NULL)"
         params['start_date'] = start_date
-        
+
     if end_date:
-        query += " AND created_date <= %(end_date)s"
+        query += " AND (created_date <= %(end_date)s OR created_date IS NULL)"
         params['end_date'] = end_date
         
     with engine.connect() as conn:
@@ -195,5 +195,25 @@ def save_product_costs(df, replace=True):
     if replace:
         with engine.begin() as conn:
             conn.execute(text("TRUNCATE TABLE product_costs"))
-            
+
     df.to_sql('product_costs', engine, if_exists='append', index=False, chunksize=1000, method='multi')
+
+def upsert_new_skus(skus, platform):
+    """
+    Insert new (sku, platform) rows with unit_cost=1 only if they don't already exist.
+    skus: list of SKU strings
+    """
+    if not skus:
+        return 0
+
+    engine = get_engine()
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table('product_costs', metadata, autoload_with=engine)
+
+    records = [{'sku': s, 'platform': platform, 'unit_cost': 1} for s in skus]
+    stmt = pg_insert(table).values(records).on_conflict_do_nothing(
+        index_elements=['sku', 'platform']
+    )
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+    return result.rowcount

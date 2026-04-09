@@ -54,6 +54,10 @@ def process_tiktok(order_files, income_files, shop_name):
                         fee = get_col_data(df, ['Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม', 'Total Fees'])
                         inc['fees'] = pd.to_numeric(fee, errors='coerce').fillna(0)
 
+                        # Bug fix: extract settlement_date from TikTok income
+                        inc['settlement_date'] = get_col_data(df, ['Order settled time', 'Settlement Date', 'Settled Time'])
+                        inc = clean_date(inc, 'settlement_date')
+
                         inc['order_id'] = inc['order_id'].astype(str).apply(clean_scientific_notation)
                         income_dfs.append(inc)
                 except Exception as e:
@@ -62,7 +66,12 @@ def process_tiktok(order_files, income_files, shop_name):
 
         if income_dfs:
             combined_inc = pd.concat(income_dfs, ignore_index=True)
-            return combined_inc.groupby('order_id')[['settlement_amount', 'affiliate', 'fees']].sum().reset_index()
+            return combined_inc.groupby('order_id').agg(
+                settlement_amount=('settlement_amount', 'sum'),
+                affiliate=('affiliate', 'sum'),
+                fees=('fees', 'sum'),
+                settlement_date=('settlement_date', 'first')
+            ).reset_index()
         return pd.DataFrame()
 
     # --- Load Income Data ---
@@ -162,9 +171,9 @@ def process_shopee(order_files, income_files, shop_name):
                     inc = pd.DataFrame()
                     inc['order_id'] = get_col_data(df, ['หมายเลขคำสั่งซื้อ', 'Order ID'])
                     inc['settlement_date'] = get_col_data(df, ['วันที่โอนชำระเงินสำเร็จ', 'Payout Completed Date', 'วันที่ปรับปรุงเข้ายอดของฉัน'])
-                    inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)', 'จำนวนเงินทั้งหมดที่โอนแล้ว', 'Payout Amount', 'Total Payout']), errors='coerce')
-                    inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price', 'ราคาตั้งต้น']), errors='coerce')
-                    inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น', 'Commission Fee', 'ค่าคอมมิชชั่น AMS']), errors='coerce')
+                    inc['settlement_amount'] = pd.to_numeric(get_col_data(df, ['จำนวนเงินทั้งหมดที่โอนแล้ว (฿)', 'จำนวนเงินทั้งหมดที่โอนแล้ว', 'Payout Amount', 'Total Payout']), errors='coerce').fillna(0)
+                    inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price', 'ราคาตั้งต้น']), errors='coerce').fillna(0)
+                    inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น', 'Commission Fee', 'ค่าคอมมิชชั่น AMS']), errors='coerce').fillna(0)
 
                     if not inc.empty and 'order_id' in inc.columns:
                         inc['fees'] = (inc['original_price'].fillna(0) - inc['settlement_amount'].fillna(0))
