@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import datetime
 from utils.local_file_manager import list_local_files, save_uploaded_file, delete_file, get_file_info
-from utils.db_service import save_orders, get_product_costs, get_all_shops, add_shop, delete_shop, upsert_new_skus
+from utils.db_service import save_orders, get_all_shops, add_shop, delete_shop, upsert_new_skus
 from utils.processors import process_tiktok, process_shopee, process_lazada
 from utils.data_helpers import find_header_row, get_col_data
 from utils.common import get_standard_status, clean_text
@@ -185,17 +185,11 @@ def render_file_manager():
                     master_df['fees'] *= ratio
                     master_df['affiliate'] *= ratio
                     
-                    # Cost Mapping
-                    cost_df = get_product_costs()
-                    if not cost_df.empty:
-                        master_df = pd.merge(master_df, cost_df, on=['sku', 'platform'], how='left')
-                        if 'unit_cost_y' in master_df.columns:
-                            master_df['unit_cost'] = master_df['unit_cost_y'].fillna(0)
-                            master_df = master_df.drop(columns=['unit_cost_x', 'unit_cost_y'], errors='ignore')
-                    
-                    master_df['unit_cost'] = master_df['unit_cost'].fillna(0)
-                    master_df['total_cost'] = master_df['quantity'] * master_df['unit_cost']
-                    master_df['net_profit'] = master_df['settlement_amount'] - master_df['total_cost']
+                    # unit_cost / total_cost / net_profit are computed live in fetch_orders
+                    # via LEFT JOIN on product_costs. Store placeholders only.
+                    master_df['unit_cost'] = 0
+                    master_df['total_cost'] = 0
+                    master_df['net_profit'] = master_df['settlement_amount']
                     master_df['status'] = master_df.apply(get_standard_status, axis=1)
 
                     if 'product_name' not in master_df.columns: master_df['product_name'] = "-"

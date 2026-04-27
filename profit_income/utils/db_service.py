@@ -86,25 +86,37 @@ def delete_shop(shop_name, platform):
 
 def fetch_orders(platform=None, start_date=None, end_date=None):
     """
-    Fetch orders from the database.
-    Supports filtering by platform and date range (inclusive).
+    Fetch orders joined with current product_costs so unit_cost / total_cost
+    always reflect the latest cost entered in the Costs tab (no re-Sync needed).
     """
     engine = get_engine()
-    query = "SELECT * FROM orders WHERE 1=1"
+    query = """
+        SELECT
+            o.id, o.order_id, o.tracking_id, o.sku, o.product_name,
+            o.platform, o.shop_name, o.status, o.quantity,
+            o.sales_amount, o.settlement_amount, o.fees, o.affiliate,
+            COALESCE(pc.unit_cost, 0)                                AS unit_cost,
+            o.quantity * COALESCE(pc.unit_cost, 0)                   AS total_cost,
+            o.settlement_amount - (o.quantity * COALESCE(pc.unit_cost, 0)) AS net_profit,
+            o.created_date, o.shipped_date, o.settlement_date
+        FROM orders o
+        LEFT JOIN product_costs pc ON o.sku = pc.sku
+        WHERE 1=1
+    """
     params = {}
-    
+
     if platform:
-        query += " AND platform = %(platform)s"
+        query += " AND o.platform = %(platform)s"
         params['platform'] = platform
-    
+
     if start_date:
-        query += " AND (created_date >= %(start_date)s OR created_date IS NULL)"
+        query += " AND (o.created_date >= %(start_date)s OR o.created_date IS NULL)"
         params['start_date'] = start_date
 
     if end_date:
-        query += " AND (created_date <= %(end_date)s OR created_date IS NULL)"
+        query += " AND (o.created_date <= %(end_date)s OR o.created_date IS NULL)"
         params['end_date'] = end_date
-        
+
     with engine.connect() as conn:
         return pd.read_sql(query, conn, params=params)
 
@@ -198,10 +210,10 @@ def save_product_costs(df, replace=True):
 
     df.to_sql('product_costs', engine, if_exists='append', index=False, chunksize=1000, method='multi')
 
-def upsert_new_skus(skus, platform):
+def upsert_new_skus(skus, platform=None):
     """
-    Insert new (sku, platform) rows with unit_cost=1 only if they don't already exist.
-    skus: list of SKU strings
+    Insert new SKU rows with unit_cost=1 only if they don't already exist.
+    platform is accepted but ignored — costs are now keyed by sku only.
     """
     if not skus:
         return 0
@@ -210,10 +222,8 @@ def upsert_new_skus(skus, platform):
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table('product_costs', metadata, autoload_with=engine)
 
-    records = [{'sku': s, 'platform': platform, 'unit_cost': 1} for s in skus]
-    stmt = pg_insert(table).values(records).on_conflict_do_nothing(
-        index_elements=['sku', 'platform']
-    )
+    records = [{'sku': s, 'unit_cost': 1} for s in skus]
+    stmt = pg_insert(table).values(records).on_conflict_do_nothing(index_elements=['sku'])
     with engine.begin() as conn:
         result = conn.execute(stmt)
     return result.rowcount
