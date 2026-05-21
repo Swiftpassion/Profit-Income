@@ -1,11 +1,32 @@
--- Create product_costs table
+-- One-time migration: collapse (sku, platform) → (sku only)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'product_costs' AND column_name = 'platform'
+    ) THEN
+        CREATE TABLE product_costs_new (
+            id SERIAL PRIMARY KEY,
+            sku TEXT NOT NULL UNIQUE,
+            unit_cost NUMERIC DEFAULT 0,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO product_costs_new (sku, unit_cost)
+            SELECT sku, MAX(unit_cost)
+            FROM product_costs
+            WHERE sku IS NOT NULL AND TRIM(sku) <> ''
+            GROUP BY sku;
+        DROP TABLE product_costs;
+        ALTER TABLE product_costs_new RENAME TO product_costs;
+    END IF;
+END$$;
+
+-- Create product_costs table (no-op if migration above already ran)
 CREATE TABLE IF NOT EXISTS product_costs (
     id SERIAL PRIMARY KEY,
-    sku TEXT NOT NULL,
-    platform TEXT NOT NULL,
+    sku TEXT NOT NULL UNIQUE,
     unit_cost NUMERIC DEFAULT 0,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (sku, platform)
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_costs_sku ON product_costs(sku);

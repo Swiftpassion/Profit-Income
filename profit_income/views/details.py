@@ -33,21 +33,31 @@ def render_details():
                 
                 # --- Filters ---
                 st.markdown("##### ตัวกรองข้อมูล")
-                col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+                col_f1, col_f2 = st.columns(2)
                 with col_f1:
-                    filter_prod_name = st.text_input("ค้นหาชื่อสินค้า", "")
+                    filter_order_id = st.text_input("ค้นหาเลขคำสั่งซื้อ", "", key="det_order_id")
                 with col_f2:
-                    filter_profit_range = st.slider("เลือกช่วง % กำไรสุทธิ", 0, 100, (0, 100))
+                    filter_prod_name = st.text_input("ค้นหาชื่อสินค้า / รหัสสินค้า", "", key="det_prod_sku")
+
+                col_f3, col_f4 = st.columns([3, 1])
                 with col_f3:
-                    st.write("") # Spacer
-                    st.write("") 
+                    filter_profit_range = st.slider("เลือกช่วง % กำไรสุทธิ", 0, 100, (0, 100))
+                with col_f4:
+                    st.write("")
+                    st.write("")
                     filter_neg_profit = st.checkbox("แสดงเฉพาะออเดอร์ติดลบ (-)")
 
-                # 1. Filter by Product Name (Row level first)
-                if filter_prod_name:
-                    df = df[df['product_name'].astype(str).str.contains(filter_prod_name, na=False)]
+                # 1. Filter by Order ID
+                if filter_order_id:
+                    df = df[df['order_id'].astype(str).str.contains(filter_order_id, na=False, case=False)]
 
-                # 2. Filter by Net Profit % (Need Order Level Aggregation to filter correctly)
+                # 2. Filter by Product Name or SKU (Row level)
+                if filter_prod_name:
+                    name_match = df['product_name'].astype(str).str.contains(filter_prod_name, na=False, case=False)
+                    sku_match = df['sku'].astype(str).str.contains(filter_prod_name, na=False, case=False)
+                    df = df[name_match | sku_match]
+
+                # 3. Filter by Net Profit % (Need Order Level Aggregation to filter correctly)
                 # We need to compute order metrics to filter by them. 
                 # Strategy: Group by order_id -> calculate metric -> get list of valid order_ids -> filter original df
                 
