@@ -66,7 +66,7 @@ def process_tiktok(order_files, income_files, shop_name):
                         inc['affiliate'] = aff_vals.abs()
 
                         # Total Fees includes Affiliate Commission — subtract to get platform fees only
-                        total_fee_raw = get_col_data(df, ['Total Fees', 'Platform Fee', 'Transaction Fee', 'ค่าธรรมเนียม'])
+                        total_fee_raw = get_col_data(df, ['Total Fees', 'ค่าธรรมเนียมทั้งหมด'])
                         total_fees = pd.to_numeric(total_fee_raw, errors='coerce').fillna(0).abs()
                         inc['fees'] = total_fees - inc['affiliate']
 
