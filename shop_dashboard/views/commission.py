@@ -6,7 +6,7 @@ from datetime import datetime
 from modules.processing import thai_months
 from modules.ui_components import render_metric_row
 
-def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
+def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options=None):
     st.markdown('<div class="header-bar"><div class="header-title"><i class="fas fa-coins"></i> สรุปค่าคอมมิชชั่น (Admin & Telesale)</div></div>', unsafe_allow_html=True)
 
     with st.container():

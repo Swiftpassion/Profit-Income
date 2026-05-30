@@ -275,7 +275,7 @@ def process_data(mode="MODE_DRIVE"):
         temp_master = df_master.copy()
         temp_master['SKU_Norm'] = temp_master['SKU'].astype(str).str.strip().str.replace(' ', '', regex=False)
         sku_type_map = temp_master.set_index('SKU_Norm')['Type'].to_dict()
-    
+
     if 'Type' in df_daily.columns:
         daily_type_map = df_daily.groupby('SKU_Main')['Type'].first().to_dict()
         for k, v in daily_type_map.items():
@@ -284,4 +284,10 @@ def process_data(mode="MODE_DRIVE"):
             elif pd.isna(sku_type_map[k]) or sku_type_map[k] == '':
                 sku_type_map[k] = v
 
-    return df_daily, df_fix_cost, sku_map, sku_list, sku_type_map
+    unique_types = sorted({
+        str(v) for v in sku_type_map.values()
+        if v and not pd.isna(v) and str(v).strip() not in ('', 'nan', '0', '0.0')
+    })
+    category_options = ["แสดงทั้งหมด"] + unique_types
+
+    return df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options

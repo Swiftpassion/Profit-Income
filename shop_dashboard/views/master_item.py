@@ -7,7 +7,7 @@ import shutil
 
 LOCAL_DATA_DIR = Path("local_data")
 
-def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
+def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options=None):
     #st.markdown('<div class="header-bar"><div class="header-title"><i class="fas fa-tools"></i> จัดการ Master Item (แก้ไขต้นทุน/เรทค่าใช้จ่าย)</div></div>', unsafe_allow_html=True)
     
 

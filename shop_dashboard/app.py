@@ -105,7 +105,7 @@ try:
     else:
         # Load Data
         try:
-            df_daily, df_fix_cost, sku_map, sku_list, sku_type_map = process_data(st.session_state.data_source_mode)
+            df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options = process_data(st.session_state.data_source_mode)
             
             if df_daily.empty and selected_page != "MASTER_ITEM": 
                 st.warning(f"⚠️ ไม่พบข้อมูล ({st.session_state.data_source_mode})")
@@ -138,21 +138,21 @@ try:
 
             # Routing
             if selected_page == "REPORT_MONTH":
-                p_month.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_month.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "REPORT_ADS":
-                p_ads.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_ads.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "REPORT_DAILY":
-                p_daily.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_daily.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "PRODUCT_GRAPH":
-                p_graph.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_graph.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "YEARLY_PNL":
-                p_yearly.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_yearly.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "MONTHLY_PNL":
-                p_monthly.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_monthly.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "COMMISSION":
-                p_comm.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_comm.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
             elif selected_page == "MASTER_ITEM":
-                p_master.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map)
+                p_master.show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options)
         
         except Exception as e:
             st.error(f"Error Loading Data: {e}")

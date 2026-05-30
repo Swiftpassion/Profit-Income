@@ -4,7 +4,7 @@ import altair as alt
 from modules.processing import thai_months
 from modules.ui_components import render_metric_row
 
-def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
+def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options=None):
     st.markdown('<div class="pnl-container">', unsafe_allow_html=True)
     st.markdown("""
     <div class="header-gradient-pnl">

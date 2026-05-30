@@ -4,7 +4,7 @@ import altair as alt
 from datetime import datetime
 from modules.ui_components import render_metric_row
 
-def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
+def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options=None):
     st.markdown('<div class="header-bar"><div class="header-title"><i class="fas fa-chart-line"></i> กราฟแสดงแนวโน้มยอดขายรายสินค้า</div></div>', unsafe_allow_html=True)
     
     # Setup global helpers locally
@@ -20,7 +20,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         sku_options_list_global.append(label)
         sku_map_reverse_global[label] = sku
 
-    CATEGORY_OPTIONS = ["แสดงทั้งหมด", "กลุ่ม DKUB", "กลุ่ม SMASH", "กลุ่ม อาหารเสริม"]
+    CATEGORY_OPTIONS = category_options if category_options else ["แสดงทั้งหมด"]
 
     def filter_skus_by_category(current_skus, selected_category):
         if selected_category == "แสดงทั้งหมด": return current_skus

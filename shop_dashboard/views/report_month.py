@@ -5,7 +5,7 @@ from datetime import datetime, date
 from modules.processing import thai_months
 from modules.ui_components import render_metric_row
 
-def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
+def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map, category_options=None):
     st.markdown('<div class="header-bar"><div class="header-title"><i class="fas fa-chart-line"></i> สรุปยอดขายรายเดือน</div></div>', unsafe_allow_html=True)
     all_years = sorted(df_daily['Year'].unique(), reverse=True)
     
@@ -30,7 +30,7 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         sku_options_list_global.append(label)
         sku_map_reverse_global[label] = sku
 
-    CATEGORY_OPTIONS = ["แสดงทั้งหมด", "กลุ่ม DKUB", "กลุ่ม SMASH", "กลุ่ม อาหารเสริม"]
+    CATEGORY_OPTIONS = category_options if category_options else ["แสดงทั้งหมด"]
 
     def filter_skus_by_category(current_skus, selected_category):
         if selected_category == "แสดงทั้งหมด": return current_skus
@@ -51,6 +51,10 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
         except: pass
 
     def cb_clear_m(): st.session_state.selected_skus = []
+
+    def cb_clear_pct():
+        for k in ["m_min_profit_pct", "m_max_profit_pct", "m_min_ad_pct", "m_max_ad_pct"]:
+            st.session_state[k] = None
 
     with st.container():
         c_y, c_m, c_s, c_e = st.columns([1, 1, 1, 1])
@@ -75,6 +79,23 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
             st.markdown("<div style='margin-top: 29px;'></div>", unsafe_allow_html=True)
             st.button("🚀 ประมวลผล", type="primary", use_container_width=True, key="btn_run_m")
 
+        c_lbl, c_pmin, c_pmax, c_div, c_amin, c_amax, c_clrpct = st.columns([0.8, 1, 1, 0.15, 1, 1, 0.5])
+        with c_lbl:
+            st.markdown("<div style='margin-top:29px; font-size:12px; color:#aaa;'>กรอง % footer:</div>", unsafe_allow_html=True)
+        with c_pmin:
+            min_profit_pct = st.number_input("กำไร% ขั้นต่ำ", value=None, placeholder="ไม่จำกัด", step=1.0, key="m_min_profit_pct")
+        with c_pmax:
+            max_profit_pct = st.number_input("กำไร% สูงสุด", value=None, placeholder="ไม่จำกัด", step=1.0, key="m_max_profit_pct")
+        with c_div:
+            st.markdown("<div style='margin-top:29px; text-align:center; color:#555;'>|</div>", unsafe_allow_html=True)
+        with c_amin:
+            min_ad_pct = st.number_input("แอด% ขั้นต่ำ", value=None, placeholder="ไม่จำกัด", step=1.0, key="m_min_ad_pct")
+        with c_amax:
+            max_ad_pct = st.number_input("แอด% สูงสุด", value=None, placeholder="ไม่จำกัด", step=1.0, key="m_max_ad_pct")
+        with c_clrpct:
+            st.markdown("<div style='margin-top:29px;'></div>", unsafe_allow_html=True)
+            st.button("🧹%", type="secondary", use_container_width=True, key="btn_clear_pct", on_click=cb_clear_pct)
+
     mask_date = (df_daily['Date'] >= start_date_m) & (df_daily['Date'] <= end_date_m)
     df_base = df_daily[mask_date]
 
@@ -90,6 +111,29 @@ def show(df_daily, df_fix_cost, sku_map, sku_list, sku_type_map):
     
     pre_final_skus = sorted(selected_skus_real) if selected_skus_real else sorted(auto_skus)
     final_skus = filter_skus_by_category(pre_final_skus, sel_category)
+
+    # Filter SKUs by % range (based on footer monthly totals, AND logic)
+    pct_filters_active = any(v is not None for v in [min_profit_pct, max_profit_pct, min_ad_pct, max_ad_pct])
+    if pct_filters_active and final_skus:
+        sku_totals = df_base[df_base['SKU_Main'].isin(final_skus)].groupby('SKU_Main').agg(
+            sales=('รายละเอียดยอดที่ชำระแล้ว', 'sum'),
+            profit=('Net_Profit', 'sum'),
+            ads=('Ads_Amount', 'sum')
+        )
+        filtered_pct = []
+        for sku in final_skus:
+            if sku not in sku_totals.index:
+                continue
+            row = sku_totals.loc[sku]
+            s = row['sales']
+            p_pct = (row['profit'] / s * 100) if s != 0 else 0.0
+            a_pct = (row['ads'] / s * 100) if s != 0 else 0.0
+            if min_profit_pct is not None and p_pct < min_profit_pct: continue
+            if max_profit_pct is not None and p_pct > max_profit_pct: continue
+            if min_ad_pct is not None and a_pct < min_ad_pct: continue
+            if max_ad_pct is not None and a_pct > max_ad_pct: continue
+            filtered_pct.append(sku)
+        final_skus = filtered_pct
 
     if not final_skus: st.warning(f"⚠️ ไม่พบข้อมูลสินค้าตามเงื่อนไข ในช่วงวันที่ {start_date_m} ถึง {end_date_m} (หมวดหมู่: {sel_category})")
     else:
