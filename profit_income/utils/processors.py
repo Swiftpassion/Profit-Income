@@ -42,7 +42,7 @@ def process_tiktok(order_files, income_files, shop_name):
                         # Normalize column names to strip trailing whitespace
                         df.columns = df.columns.str.strip()
 
-                        oid_col = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ', 'Order/adjustment ID'])
+                        oid_col = get_col_data(df, ['Order ID', 'Order No', 'หมายเลขคำสั่งซื้อ', 'Order/adjustment ID', 'หมายเลขคำสั่งซื้อ/การปรับ'])
                         if oid_col is None: continue
 
                         inc = pd.DataFrame()
@@ -50,17 +50,17 @@ def process_tiktok(order_files, income_files, shop_name):
 
                         # For non-Order rows (reimbursements, adjustments) use Related order ID
                         # so their settlement amount is attributed to the original order
-                        type_col = get_col_data(df, ['Type'])
-                        related_col = get_col_data(df, ['Related order ID'])
+                        type_col = get_col_data(df, ['Type', 'ประเภทธุรกรรม'])
+                        related_col = get_col_data(df, ['Related order ID', 'หมายเลขคำสั่งซื้อที่เกี่ยวข้อง'])
                         if type_col is not None and related_col is not None:
                             related_clean = related_col.astype(str).apply(clean_scientific_notation)
-                            is_order = type_col.str.strip() == 'Order'
+                            is_order = type_col.str.strip().isin(['Order', 'คำสั่งซื้อ'])
                             inc['order_id'] = inc['order_id'].where(is_order, related_clean)
 
-                        settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ', 'Total settlement amount'])
+                        settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ', 'Total settlement amount', 'จำนวนเงินที่ชำระทั้งหมด'])
                         inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
 
-                        aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น'])
+                        aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น', 'ค่าคอมมิชชั่นแอฟฟิลิเอต'])
                         aff_vals = pd.to_numeric(aff, errors='coerce').fillna(0)
                         # New format stores fees as negative; take abs so we store as positive cost
                         inc['affiliate'] = aff_vals.abs()
@@ -70,7 +70,7 @@ def process_tiktok(order_files, income_files, shop_name):
                         total_fees = pd.to_numeric(total_fee_raw, errors='coerce').fillna(0).abs()
                         inc['fees'] = total_fees - inc['affiliate']
 
-                        inc['settlement_date'] = get_col_data(df, ['Order settled time', 'Settlement Date', 'Settled Time'])
+                        inc['settlement_date'] = get_col_data(df, ['Order settled time', 'Settlement Date', 'Settled Time', 'เวลาที่ชำระคำสั่งซื้อ'])
                         inc = clean_date(inc, 'settlement_date')
 
                         income_dfs.append(inc)
@@ -82,6 +82,9 @@ def process_tiktok(order_files, income_files, shop_name):
             combined_inc = pd.concat(income_dfs, ignore_index=True)
             # Filter out rows with empty/invalid order_id before aggregation
             combined_inc = combined_inc[combined_inc['order_id'].str.strip().replace({'nan': '', 'None': ''}) != '']
+            # Deduplicate same order+settlement_date across overlapping income files
+            # (prevents double-counting when user uploads both English & Thai versions of same statement)
+            combined_inc = combined_inc.drop_duplicates(subset=['order_id', 'settlement_date'], keep='first')
             return combined_inc.groupby('order_id').agg(
                 settlement_amount=('settlement_amount', 'sum'),
                 affiliate=('affiliate', 'sum'),

@@ -29,6 +29,14 @@ def render_details():
         st.write("")
         filter_neg_profit = st.checkbox("แสดงเฉพาะออเดอร์ติดลบ (-)")
 
+    col_f5, col_f6, col_f7 = st.columns(3)
+    with col_f5:
+        filter_has_fees = st.checkbox("แสดงเฉพาะออเดอร์ที่มีค่าธรรมเนียม (≠ 0)", key="det_has_fees")
+    with col_f6:
+        filter_has_affiliate = st.checkbox("แสดงเฉพาะออเดอร์ที่มีค่าแอฟฟิลิเอต (≠ 0)", key="det_has_aff")
+    with col_f7:
+        filter_zero_cost = st.checkbox("แสดงเฉพาะสินค้าที่ต้นทุน = 0", key="det_zero_cost")
+
     try:
         raw_df = fetch_orders(platform=selected_platform, start_date=d_start_det, end_date=d_end_det)
 
@@ -57,7 +65,19 @@ def render_details():
             sku_match = df['sku'].astype(str).str.contains(filter_prod_name, na=False, case=False)
             df = df[name_match | sku_match]
 
-        # 3. Filter by Net Profit % (order-level aggregation)
+        # 3. Filter by Fees / Affiliate (order-level: keep order if sum > 0)
+        if filter_has_fees or filter_has_affiliate:
+            order_fee_sums = df.groupby('order_id')[['fees', 'affiliate']].sum()
+            fee_mask = (order_fee_sums['fees'] > 0) if filter_has_fees else pd.Series(True, index=order_fee_sums.index)
+            aff_mask = (order_fee_sums['affiliate'] > 0) if filter_has_affiliate else pd.Series(True, index=order_fee_sums.index)
+            valid_fee_orders = order_fee_sums.index[fee_mask & aff_mask]
+            df = df[df['order_id'].isin(valid_fee_orders)]
+
+        # 3.5 Filter by zero unit_cost (row-level: keeps only items with cost = 0)
+        if filter_zero_cost:
+            df = df[df['unit_cost'] == 0]
+
+        # 4. Filter by Net Profit % (order-level aggregation)
         ops_cost_fixed = 10.0
         grouped_metrics = df.groupby('order_id').apply(
             lambda x: pd.Series({
