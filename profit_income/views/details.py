@@ -79,13 +79,11 @@ def render_details():
 
         # 4. Filter by Net Profit % (order-level aggregation)
         ops_cost_fixed = 10.0
-        grouped_metrics = df.groupby('order_id').apply(
-            lambda x: pd.Series({
-                'total_sales': x['sales_amount'].sum(),
-                'total_cost': x['total_cost'].sum(),
-                'total_fees': x['fees'].sum(),
-                'total_aff': x['affiliate'].sum()
-            })
+        grouped_metrics = df.groupby('order_id').agg(
+            total_sales=('sales_amount', 'sum'),
+            total_cost=('total_cost', 'sum'),
+            total_fees=('fees', 'sum'),
+            total_aff=('affiliate', 'sum'),
         ).reset_index()
 
         grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - ops_cost_fixed
