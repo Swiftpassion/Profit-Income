@@ -90,14 +90,18 @@ def fetch_orders(platform=None, start_date=None, end_date=None):
     always reflect the latest cost entered in the Costs tab (no re-Sync needed).
     """
     engine = get_engine()
+    # ออเดอร์ที่ถูก "ยกเลิก" ไม่นำมาคิดกำไรขาดทุน -> บังคับต้นทุน/รายได้/ค่าธรรมเนียม/แอฟฟิลิเอตเป็น 0
     query = """
         SELECT
             o.id, o.order_id, o.tracking_id, o.sku, o.product_name,
             o.platform, o.shop_name, o.status, o.quantity,
-            o.sales_amount, o.settlement_amount, o.fees, o.affiliate,
-            COALESCE(pc.unit_cost, 0)                                AS unit_cost,
-            o.quantity * COALESCE(pc.unit_cost, 0)                   AS total_cost,
-            o.settlement_amount - (o.quantity * COALESCE(pc.unit_cost, 0)) AS net_profit,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.sales_amount END AS sales_amount,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.settlement_amount END AS settlement_amount,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.fees END AS fees,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.affiliate END AS affiliate,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE COALESCE(pc.unit_cost, 0) END AS unit_cost,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.quantity * COALESCE(pc.unit_cost, 0) END AS total_cost,
+            CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.settlement_amount - (o.quantity * COALESCE(pc.unit_cost, 0)) END AS net_profit,
             o.created_date, o.shipped_date, o.settlement_date
         FROM orders o
         LEFT JOIN product_costs pc ON o.sku = pc.sku

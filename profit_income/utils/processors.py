@@ -199,10 +199,29 @@ def process_shopee(order_files, income_files, shop_name):
                     inc['original_price'] = pd.to_numeric(get_col_data(df, ['สินค้าราคาปกติ', 'Original Price', 'ราคาตั้งต้น']), errors='coerce').fillna(0)
                     inc['affiliate'] = pd.to_numeric(get_col_data(df, ['ค่าคอมมิชชั่น AMS', 'ค่าคอมมิชชั่น', 'Commission Fee']), errors='coerce').fillna(0).abs()
 
+                    # ค่าธรรมเนียมรวม = คอลัมน์ AA+AB+AC+AD+AE+AF+AG ในไฟล์ Income ของ Shopee
+                    # (ค่าคอมมิชชั่น, ค่าบริการ, ค่าธรรมเนียมโครงสร้างพื้นฐานแพลตฟอร์ม, ค่าธรรมเนียมของโปรแกรมประหยัดค่าจัดส่ง,
+                    #  ค่าธุรกรรมการชำระเงิน, ภาษี, ค่าธรรมเนียมเติมเงินโฆษณาจากเงิน Escrow)
+                    fee_col_names = [
+                        'ค่าคอมมิชชั่น',
+                        'ค่าบริการ',
+                        'ค่าธรรมเนียมโครงสร้างพื้นฐานแพลตฟอร์ม',
+                        'ค่าธรรมเนียม ของโปรแกรมประหยัดค่าจัดส่ง',
+                        'ค่าธุรกรรมการชำระเงิน',
+                        'ภาษี',
+                        'ค่าธรรมเนียมเติมเงินโฆษณาจากเงิน Escrow',
+                    ]
+                    fee_cols_found = [get_col_data(df, [name]) for name in fee_col_names]
+                    fee_cols_found = [pd.to_numeric(c, errors='coerce').fillna(0).abs() for c in fee_cols_found if c is not None]
+
                     inc = inc.dropna(subset=['order_id'])
                     inc = inc[inc['order_id'].astype(str).str.strip() != '']
                     if not inc.empty:
-                        inc['fees'] = (inc['original_price'].fillna(0) - inc['settlement_amount'].fillna(0) - inc['affiliate']).clip(lower=0)
+                        if fee_cols_found:
+                            inc['fees'] = sum(c.loc[inc.index] for c in fee_cols_found)
+                        else:
+                            # Fallback สำหรับไฟล์รูปแบบเก่าที่ไม่มีคอลัมน์ค่าธรรมเนียมแยกรายการ
+                            inc['fees'] = (inc['original_price'].fillna(0) - inc['settlement_amount'].fillna(0) - inc['affiliate']).clip(lower=0)
                         inc = clean_date(inc, 'settlement_date')
                         inc['order_id'] = inc['order_id'].apply(clean_scientific_notation)
                         income_dfs.append(inc)
