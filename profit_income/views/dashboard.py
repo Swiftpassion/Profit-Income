@@ -158,7 +158,9 @@ def render_dashboard():
             def safe_div(a, b): return (a/b*100) if b > 0 else 0
             
             calc['ROAS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
-            calc['ค่าดำเนินการ'] = calc['total_orders'] * 10
+            # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
+            calc['billable_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count']
+            calc['ค่าดำเนินการ'] = calc['billable_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
             # ... HTML Table Code ...
