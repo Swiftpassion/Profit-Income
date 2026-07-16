@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils.db_service import fetch_orders
+from utils.db_service import fetch_orders, get_all_shops
 from utils.common import format_thai_date
 
 def render_details():
@@ -9,9 +9,17 @@ def render_details():
     selected_platform = st.radio("เลือกแพลตฟอร์ม", sub_plat_list, horizontal=True)
     st.markdown("---")
 
-    col_d1, col_d2 = st.columns(2)
+    # ตัวเลือกร้านค้าของแพลตฟอร์มที่เลือก
+    try:
+        shops_df = get_all_shops()
+        shop_opts = sorted(shops_df.loc[shops_df['platform'] == selected_platform, 'shop_name'].dropna().unique().tolist())
+    except Exception:
+        shop_opts = []
+
+    col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1: d_start_det = st.date_input("เริ่มวันที่", st.session_state.d_start, key="det_start")
     with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
+    with col_d3: selected_shop = st.selectbox("เลือกร้านค้า", ["ทั้งหมด"] + shop_opts, key=f"det_shop_{selected_platform}")
 
     # --- Filters (always rendered, even when no data) ---
     st.markdown("##### ตัวกรองข้อมูล")
@@ -47,6 +55,10 @@ def render_details():
         raw_df['created_date'] = pd.to_datetime(raw_df['created_date'], errors='coerce').dt.date
         in_range = (raw_df['created_date'] >= d_start_det) & (raw_df['created_date'] <= d_end_det)
         df = raw_df.loc[in_range | raw_df['created_date'].isna()].copy()
+
+        # Filter แยกร้าน
+        if selected_shop != "ทั้งหมด" and 'shop_name' in df.columns:
+            df = df[df['shop_name'] == selected_shop]
 
         if df.empty:
             st.info(f"ไม่พบข้อมูล {selected_platform} ในช่วงวันที่เลือก")

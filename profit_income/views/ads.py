@@ -77,8 +77,8 @@ def render_ads():
         pd.DataFrame(editor_data),
         column_config={
             "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
-            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=100),
-            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.1)
+            "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=0.01),
+            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.01)
         },
         hide_index=True,
         num_rows="fixed",

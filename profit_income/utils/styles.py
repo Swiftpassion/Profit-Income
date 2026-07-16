@@ -13,6 +13,16 @@ def load_css():
         font-family: 'Sarabun', sans-serif !important;
     }
 
+    /* คืน font ไอคอนของ Streamlit (Material Symbols) ไม่งั้นไอคอนจะแสดงเป็นข้อความ
+       เช่น keyboard_arrow_down แทนสัญลักษณ์ลูกศร */
+    span[data-testid="stIconMaterial"],
+    [data-testid="stExpanderToggleIcon"],
+    .material-symbols-rounded,
+    .material-symbols-outlined,
+    .material-icons {
+        font-family: 'Material Symbols Rounded' !important;
+    }
+
     /* Container */
     .custom-table-wrapper {
         overflow-x: auto;
@@ -66,5 +76,16 @@ def load_css():
     .bar-container { position: absolute; bottom: 0; left: 0; height: 4px; background-color: #27ae60; opacity: 0.7; z-index: 1; }
     .cell-content { position: relative; z-index: 2; }
     td.relative-cell { position: relative; padding-bottom: 8px; }
+
+    /* แสดงชื่อร้านค้าเต็มใน multiselect (ไม่ตัดข้อความด้วย ...) */
+    .stMultiSelect [data-baseweb="tag"] {
+        max-width: none !important;
+    }
+    .stMultiSelect [data-baseweb="tag"] span {
+        max-width: none !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+    }
     </style>
 """, unsafe_allow_html=True)

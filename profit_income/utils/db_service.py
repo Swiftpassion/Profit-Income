@@ -202,6 +202,17 @@ def get_product_costs():
     engine = get_engine()
     return pd.read_sql("SELECT * FROM product_costs", engine)
 
+def get_sku_product_names():
+    """Map each SKU to a product name from the orders table (latest row wins)."""
+    engine = get_engine()
+    query = """
+        SELECT DISTINCT ON (sku) sku, product_name
+        FROM orders
+        WHERE sku IS NOT NULL AND product_name IS NOT NULL
+        ORDER BY sku, id DESC
+    """
+    return pd.read_sql(query, engine)
+
 def save_product_costs(df, replace=True):
     """
     Save product costs.
