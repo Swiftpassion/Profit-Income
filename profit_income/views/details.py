@@ -78,15 +78,18 @@ def render_details():
             df = df[df['unit_cost'] == 0]
 
         # 4. Filter by Net Profit % (order-level aggregation)
+        # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
         ops_cost_fixed = 10.0
         grouped_metrics = df.groupby('order_id').agg(
             total_sales=('sales_amount', 'sum'),
             total_cost=('total_cost', 'sum'),
             total_fees=('fees', 'sum'),
             total_aff=('affiliate', 'sum'),
+            is_cancelled=('status', lambda s: (s == 'ยกเลิก').all()),
         ).reset_index()
 
-        grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - ops_cost_fixed
+        grouped_metrics['ops_cost'] = grouped_metrics['is_cancelled'].apply(lambda c: 0.0 if c else ops_cost_fixed)
+        grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - grouped_metrics['ops_cost']
         grouped_metrics['net_profit_pct'] = grouped_metrics.apply(
             lambda row: (row['net_profit'] / row['total_sales'] * 100) if row['total_sales'] > 0 else 0, axis=1
         )
@@ -171,7 +174,8 @@ def render_details():
             order_aff = group['affiliate'].sum()
             order_settle = group['settlement_amount'].sum()
             order_cost_total = group['total_cost'].sum()
-            ops_cost = 10.0
+            # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
+            ops_cost = 0.0 if (group['status'] == 'ยกเลิก').all() else 10.0
             order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
             sum_sales += order_sales; sum_net_profit += order_net_profit
 
