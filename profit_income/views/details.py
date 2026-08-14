@@ -1,7 +1,22 @@
 import streamlit as st
 import pandas as pd
+import calendar
+from datetime import date
 from utils.db_service import fetch_orders, get_all_shops
 from utils.common import format_thai_date
+
+THAI_MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+
+def _update_det_month():
+    y = st.session_state.det_sel_year
+    m_str = st.session_state.det_sel_month
+    try:
+        m_idx = THAI_MONTHS.index(m_str) + 1
+        _, days = calendar.monthrange(y, m_idx)
+        st.session_state.det_start = date(y, m_idx, 1)
+        st.session_state.det_end = date(y, m_idx, days)
+    except Exception:
+        pass
 
 def render_details():
     st.header("📦 รายละเอียดออเดอร์แยกรายสินค้า")
@@ -16,9 +31,23 @@ def render_details():
     except Exception:
         shop_opts = []
 
+    today = date.today()
+    year_opts = [today.year - 2, today.year - 1, today.year]
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.selectbox("เลือกปี", year_opts, index=2, key="det_sel_year", on_change=_update_det_month)
+    with col_m2:
+        st.selectbox("เลือกเดือน", THAI_MONTHS, index=today.month - 1, key="det_sel_month", on_change=_update_det_month)
+
+    # ตั้งค่าเริ่มต้นให้ session state ครั้งแรกเท่านั้น เพื่อไม่ให้ชนกับการ set ค่าผ่าน callback เลือกเดือน
+    if "det_start" not in st.session_state:
+        st.session_state.det_start = st.session_state.d_start
+    if "det_end" not in st.session_state:
+        st.session_state.det_end = st.session_state.d_end
+
     col_d1, col_d2, col_d3 = st.columns(3)
-    with col_d1: d_start_det = st.date_input("เริ่มวันที่", st.session_state.d_start, key="det_start")
-    with col_d2: d_end_det = st.date_input("ถึงวันที่", st.session_state.d_end, key="det_end")
+    with col_d1: d_start_det = st.date_input("เริ่มวันที่", key="det_start")
+    with col_d2: d_end_det = st.date_input("ถึงวันที่", key="det_end")
     with col_d3: selected_shop = st.selectbox("เลือกร้านค้า", ["ทั้งหมด"] + shop_opts, key=f"det_shop_{selected_platform}")
 
     # --- Filters (always rendered, even when no data) ---
@@ -66,6 +95,15 @@ def render_details():
 
         for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount', 'unit_cost']:
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+        if 'has_income' not in df.columns:
+            df['has_income'] = True
+        df['has_income'] = df['has_income'].fillna(True).astype(bool)
+
+        # TikTok: กำไรสุทธิ = ยอดเงินที่ได้รับจริง (settlement) - ต้นทุน - ค่าดำเนินการ
+        # แพลตฟอร์มอื่นยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต - ค่าดำเนินการ
+        is_tiktok = selected_platform == 'TIKTOK'
+        if is_tiktok:
+            st.caption("ℹ️ TikTok: กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน − ค่าดำเนินการ** | ⚠️ = ยังไม่มี Income เข้ามาตรงกับออเดอร์นี้ (ยอดเงินที่ได้รับจริง/กำไรสุทธิยังไม่ควรใช้อ้างอิง)")
 
         # 1. Filter by Order ID
         if filter_order_id:
@@ -94,6 +132,7 @@ def render_details():
         ops_cost_fixed = 10.0
         grouped_metrics = df.groupby('order_id').agg(
             total_sales=('sales_amount', 'sum'),
+            total_settle=('settlement_amount', 'sum'),
             total_cost=('total_cost', 'sum'),
             total_fees=('fees', 'sum'),
             total_aff=('affiliate', 'sum'),
@@ -101,7 +140,10 @@ def render_details():
         ).reset_index()
 
         grouped_metrics['ops_cost'] = grouped_metrics['is_cancelled'].apply(lambda c: 0.0 if c else ops_cost_fixed)
-        grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - grouped_metrics['ops_cost']
+        if is_tiktok:
+            grouped_metrics['net_profit'] = grouped_metrics['total_settle'] - grouped_metrics['total_cost'] - grouped_metrics['ops_cost']
+        else:
+            grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - grouped_metrics['ops_cost']
         grouped_metrics['net_profit_pct'] = grouped_metrics.apply(
             lambda row: (row['net_profit'] / row['total_sales'] * 100) if row['total_sales'] > 0 else 0, axis=1
         )
@@ -186,9 +228,13 @@ def render_details():
             order_aff = group['affiliate'].sum()
             order_settle = group['settlement_amount'].sum()
             order_cost_total = group['total_cost'].sum()
+            order_has_income = bool(group['has_income'].all())
             # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
             ops_cost = 0.0 if (group['status'] == 'ยกเลิก').all() else 10.0
-            order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
+            if is_tiktok:
+                order_net_profit = order_settle - order_cost_total - ops_cost
+            else:
+                order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
             sum_sales += order_sales; sum_net_profit += order_net_profit
 
             created_date_str = format_thai_date(group.iloc[0]['created_date'])
@@ -224,8 +270,9 @@ def render_details():
                     html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(ops_cost)}</td>'
                     html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(ops_cost, order_sales)}</td>'
                     html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{settle_date_str}</td>'
-                    html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_settle)}</td>'
-                    html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right; font-weight:bold;">{fmt_num(order_net_profit)}</td>'
+                    no_income_badge = '' if order_has_income else ' <span title="ยังไม่มี Income เข้ามาตรงกับออเดอร์นี้">⚠️</span>'
+                    html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right;">{fmt_num(order_settle)}{no_income_badge}</td>'
+                    html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:right; font-weight:bold;">{fmt_num(order_net_profit)}{no_income_badge}</td>'
                     html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_net_profit, order_sales)}</td>'
                 html += "</tr>"
 

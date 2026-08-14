@@ -163,6 +163,8 @@ def process_tiktok(order_files, income_files, shop_name):
         final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
         income_master['order_id'] = income_master['order_id'].astype(str).str.strip()
         merged = pd.merge(final_orders, income_master, on='order_id', how='left')
+        # order_id not found in the Income file -> ยังไม่มี income เข้ามาตรงกับออเดอร์นี้
+        merged['has_income'] = merged['settlement_amount'].notna()
         for col in ['settlement_amount', 'affiliate', 'fees']:
             if col in merged.columns: merged[col] = merged[col].fillna(0)
         return merged
@@ -170,6 +172,7 @@ def process_tiktok(order_files, income_files, shop_name):
         final_orders['settlement_amount'] = 0
         final_orders['affiliate'] = 0
         final_orders['fees'] = 0
+        final_orders['has_income'] = False
         return final_orders
 
 def process_shopee(order_files, income_files, shop_name):
@@ -269,8 +272,12 @@ def process_shopee(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final = pd.concat(all_orders, ignore_index=True)
 
+    # Shopee ยังใช้สูตรกำไรสุทธิแบบเดิม (อิงยอดขาย) จึงไม่เช็คสถานะ income ต่อออเดอร์ในตอนนี้
     if not income_master.empty:
-        return pd.merge(final, income_master, on='order_id', how='left')
+        merged = pd.merge(final, income_master, on='order_id', how='left')
+        merged['has_income'] = True
+        return merged
+    final['has_income'] = True
     return final
 
 def process_lazada(order_files, income_files, shop_name):
@@ -357,14 +364,17 @@ def process_lazada(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_orders = pd.concat(all_orders, ignore_index=True)
 
+    # Lazada ยังใช้สูตรกำไรสุทธิแบบเดิม (อิงยอดขาย) จึงไม่เช็คสถานะ income ต่อออเดอร์ในตอนนี้
     if not income_master.empty:
         final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
         income_master['order_id'] = income_master['order_id'].astype(str).str.strip()
         merged = pd.merge(final_orders, income_master, on='order_id', how='left')
         for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
             if col in merged.columns: merged[col] = merged[col].fillna(0)
+        merged['has_income'] = True
         return merged
     else:
         for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
             final_orders[col] = 0
+        final_orders['has_income'] = True
         return final_orders

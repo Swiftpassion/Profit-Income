@@ -44,6 +44,9 @@ def render_dashboard():
         if shopee_check: sel_plats.append('SHOPEE')
         if lazada_check: sel_plats.append('LAZADA')
 
+    if 'TIKTOK' in sel_plats:
+        st.caption("ℹ️ TikTok: กำไร/กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน** (แพลตฟอร์มอื่นยังคำนวณจากยอดขาย − ต้นทุน − ค่าธรรมเนียม − ค่าแอฟฟิลิเอต) | ⚠️N ที่คอลัมน์กำไรสุทธิ = จำนวนออเดอร์ TikTok วันนั้นที่ยังไม่มี Income เข้ามาตรงกับออเดอร์ (ตัวเลขวันนั้นยังไม่ควรใช้อ้างอิง)")
+
     # Data Processing with Cache
     try:
         # A. ดึงข้อมูลออเดอร์ (Cached)
@@ -122,12 +125,29 @@ def render_dashboard():
 
             df = raw_df.loc[mask].copy()
 
-            for c in ['sales_amount', 'total_cost', 'fees', 'affiliate']:
+            for c in ['sales_amount', 'total_cost', 'fees', 'affiliate', 'settlement_amount']:
                 if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+            if 'has_income' not in df.columns:
+                df['has_income'] = True
+            df['has_income'] = df['has_income'].fillna(True).astype(bool)
+
+            # TikTok: กำไร (ก่อนหักค่าแอด/ค่าดำเนินการ) คำนวณจากยอดเงินที่ได้รับจริง (Settlement) - ต้นทุน
+            # แพลตฟอร์มอื่นยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต
+            is_tiktok_row = df['platform'].astype(str).str.upper() == 'TIKTOK'
+            df['profit_base'] = df['sales_amount'] - df['total_cost'] - df['fees'] - df['affiliate']
+            df.loc[is_tiktok_row, 'profit_base'] = df.loc[is_tiktok_row, 'settlement_amount'] - df.loc[is_tiktok_row, 'total_cost']
+
+            # นับจำนวนออเดอร์ TikTok ที่ยังไม่มี Income เข้ามาตรงกับออเดอร์ ต่อวัน (ไว้เตือนผู้ใช้)
+            order_level = df.drop_duplicates(subset='order_id')[['order_id', 'created_date', 'has_income']]
+            missing_income = (
+                order_level.loc[~order_level['has_income']]
+                .groupby('created_date')['order_id'].nunique()
+                .reset_index(name='missing_income_orders')
+            )
 
             date_range = pd.date_range(start=st.session_state.d_start, end=st.session_state.d_end)
             dates_df = pd.DataFrame({'created_date': date_range.date})
-            
+
             daily = df.groupby('created_date').agg(
                 success_count=('status', lambda x: (x == 'ออเดอร์สำเร็จ').sum()),
                 pending_count=('status', lambda x: (x == 'รอดำเนินการ').sum()),
@@ -136,9 +156,12 @@ def render_dashboard():
                 sales_sum=('sales_amount', 'sum'),
                 cost_sum=('total_cost', 'sum'),
                 fees_sum=('fees', 'sum'),
-                affiliate_sum=('affiliate', 'sum')
+                affiliate_sum=('affiliate', 'sum'),
+                profit_sum=('profit_base', 'sum')
             ).reset_index()
-            
+            daily = pd.merge(daily, missing_income, on='created_date', how='left')
+            daily['missing_income_orders'] = daily['missing_income_orders'].fillna(0)
+
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
             if not ads_db.empty:
@@ -151,7 +174,7 @@ def render_dashboard():
             # D. คำนวณ
             calc = final_df.copy()
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
-            calc['กำไร'] = calc['sales_sum'] - calc['cost_sum'] - calc['fees_sum'] - calc['affiliate_sum']
+            calc['กำไร'] = calc['profit_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
             calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
             
@@ -240,6 +263,11 @@ def render_dashboard():
                 if bar_width > 0:
                     bar_html = f'<div class="bar-container" style="width: {bar_width}%;"></div>'
 
+                missing_income_badge = ""
+                if r.get('missing_income_orders', 0) > 0:
+                    n_missing = int(r['missing_income_orders'])
+                    missing_income_badge = f' <span title="TikTok: มี {n_missing} ออเดอร์วันนี้ที่ยังไม่มี Income เข้ามาตรงกับออเดอร์">⚠️{n_missing}</span>'
+
                 row_html = f"""
                 <tr>
                     <td class="txt">{date_str}</td>
@@ -266,7 +294,7 @@ def render_dashboard():
                     <td class="num">{fmt_val(r['ค่าดำเนินการ'])}</td>
                     <td class="num">{fmt_val(safe_div(r['ค่าดำเนินการ'], sales), True)}</td>
                     <td class="num font-bold relative-cell">
-                        <span class="cell-content">{fmt_val(net_profit)}</span>
+                        <span class="cell-content">{fmt_val(net_profit)}{missing_income_badge}</span>
                         {bar_html}
                     </td>
                     <td class="num">{fmt_val(safe_div(net_profit, sales), True)}</td>
@@ -284,10 +312,14 @@ def render_dashboard():
             sum_ads_total = calc['ค่าแอดรวม'].sum()
             sum_ops = calc['ค่าดำเนินการ'].sum()
             sum_net_profit = calc['กำไรสุทธิ'].sum()
-            
+            sum_missing_income = int(calc.get('missing_income_orders', pd.Series(dtype=float)).sum())
+
             total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
             avr_ROAS_ADS = calc['manual_roas'].mean() if len(calc) > 0 else 0
-            
+            total_missing_badge = ""
+            if sum_missing_income > 0:
+                total_missing_badge = f' <span title="TikTok: มี {sum_missing_income} ออเดอร์ในช่วงนี้ที่ยังไม่มี Income เข้ามาตรงกับออเดอร์">⚠️{sum_missing_income}</span>'
+
             total_html = f"""
             <tr class="total-row">
                 <td class="txt">รวม</td>
@@ -313,7 +345,7 @@ def render_dashboard():
                 <td class="num">{fmt_val(safe_div(sum_ads_total, sum_sales), True)}</td>
                 <td class="num">{fmt_val(sum_ops)}</td>
                 <td class="num">{fmt_val(safe_div(sum_ops, sum_sales), True)}</td>
-                <td class="num">{fmt_val(sum_net_profit)}</td>
+                <td class="num">{fmt_val(sum_net_profit)}{total_missing_badge}</td>
                 <td class="num">{fmt_val(safe_div(sum_net_profit, sum_sales), True)}</td>
             </tr>
             """

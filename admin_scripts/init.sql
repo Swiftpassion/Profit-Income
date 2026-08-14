@@ -59,10 +59,14 @@ CREATE TABLE IF NOT EXISTS orders (
     unit_cost NUMERIC DEFAULT 0,
     total_cost NUMERIC DEFAULT 0,
     net_profit NUMERIC DEFAULT 0,
+    has_income BOOLEAN DEFAULT TRUE,
     created_date TIMESTAMP,
     shipped_date TIMESTAMP,
     settlement_date TIMESTAMP
 );
+
+-- Migration: add has_income to orders created before this column existed
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS has_income BOOLEAN DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_orders_shop_platform ON orders(shop_name, platform);
 CREATE INDEX IF NOT EXISTS idx_orders_created_date ON orders(created_date);

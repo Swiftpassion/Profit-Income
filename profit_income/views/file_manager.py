@@ -190,6 +190,9 @@ def render_file_manager():
                     master_df['unit_cost'] = 0
                     master_df['total_cost'] = 0
                     master_df['net_profit'] = master_df['settlement_amount']
+                    if 'has_income' not in master_df.columns:
+                        master_df['has_income'] = True
+                    master_df['has_income'] = master_df['has_income'].fillna(True)
                     master_df['status'] = master_df.apply(get_standard_status, axis=1)
 
                     if 'product_name' not in master_df.columns: master_df['product_name'] = "-"
@@ -202,7 +205,7 @@ def render_file_manager():
                     
                     # Upload to Database
                     status_box.text("☁️ บันทึกลงฐานข้อมูล...")
-                    cols = ['order_id', 'status', 'sku', 'product_name', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
+                    cols = ['order_id', 'status', 'sku', 'product_name', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'has_income', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
                     master_df = master_df[[c for c in cols if c in master_df.columns]]
                     master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 

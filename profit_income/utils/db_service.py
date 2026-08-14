@@ -102,6 +102,7 @@ def fetch_orders(platform=None, start_date=None, end_date=None):
             CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE COALESCE(pc.unit_cost, 0) END AS unit_cost,
             CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.quantity * COALESCE(pc.unit_cost, 0) END AS total_cost,
             CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.settlement_amount - (o.quantity * COALESCE(pc.unit_cost, 0)) END AS net_profit,
+            COALESCE(o.has_income, TRUE) AS has_income,
             o.created_date, o.shipped_date, o.settlement_date
         FROM orders o
         LEFT JOIN product_costs pc ON o.sku = pc.sku
