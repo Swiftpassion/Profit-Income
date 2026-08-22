@@ -61,7 +61,7 @@ def render_ads():
         if not db_ads.empty and d_date in db_ads.index:
             current_ads = float(db_ads.loc[d_date, 'ads_amount'])
             current_roas = float(db_ads.loc[d_date, 'roas_ads'])
-        editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS ADS': current_roas})
+        editor_data.append({'วันที่': d_date, 'ค่า ADS': current_ads, 'ROAS': current_roas})
 
     st.markdown("---")
     col_btn, col_info = st.columns([2, 5])
@@ -78,7 +78,10 @@ def render_ads():
         column_config={
             "วันที่": st.column_config.DateColumn(format="DD/MM/YYYY", disabled=True),
             "ค่า ADS": st.column_config.NumberColumn(format="฿%.2f", min_value=0, step=0.01),
-            "ROAS ADS": st.column_config.NumberColumn(format="%.2f", min_value=0, step=0.01)
+            "ROAS": st.column_config.NumberColumn(
+                format="%.2f", min_value=0, step=0.01,
+                help="ROAS ที่คีย์เองแบบแมนนวล (ระบบจะคำนวณ ROAS ADS = ยอดขาย ÷ ค่าแอดรวม ให้เองที่หน้าสรุป)"
+            )
         },
         hide_index=True,
         num_rows="fixed",
@@ -93,8 +96,8 @@ def render_ads():
             upsert_data.append({
                 "date": row['วันที่'], 
                 "shop_name": shop_selected,
-                "ads_amount": row['ค่า ADS'], 
-                "roas_ads": row['ROAS ADS']
+                "ads_amount": row['ค่า ADS'],
+                "roas_ads": row['ROAS']
             })
         try:
             save_ads(pd.DataFrame(upsert_data))

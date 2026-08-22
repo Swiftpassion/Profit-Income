@@ -106,7 +106,10 @@ def render_dashboard():
             
             if not ads_temp.empty:
                 # Group by date if multiple shops selected to sum up ads
-                ads_grouped = ads_temp.groupby('date')[['ads_amount', 'roas_ads']].sum().reset_index()
+                ads_grouped = ads_temp.groupby('date').agg(
+                    ads_amount=('ads_amount', 'sum'),
+                    roas_ads=('roas_ads', 'mean')
+                ).reset_index()
                 
                 ads_db = ads_grouped.rename(columns={'date': 'created_date', 'ads_amount': 'manual_ads', 'roas_ads': 'manual_roas'})
                 ads_db['manual_ads'] = pd.to_numeric(ads_db['manual_ads'], errors='coerce').fillna(0)
@@ -176,11 +179,11 @@ def render_dashboard():
             calc['total_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count'] + calc['cancel_count']
             calc['กำไร'] = calc['profit_sum']
             calc['ADS VAT 7%'] = calc['manual_ads'] * 0.07
-            calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['manual_roas'] + calc['ADS VAT 7%']
-            
+            calc['ค่าแอดรวม'] = calc['manual_ads'] + calc['ADS VAT 7%']
+
             def safe_div(a, b): return (a/b*100) if b > 0 else 0
-            
-            calc['ROAS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
+
+            calc['ROAS ADS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
             # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
             calc['billable_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count']
             calc['ค่าดำเนินการ'] = calc['billable_orders'] * 10
@@ -218,7 +221,7 @@ def render_dashboard():
                         <th style="background-color: {h_blue};">ตีกลับ</th>
                         <th style="background-color: {h_blue};">ยกเลิก</th>
                         <th style="background-color: {h_blue};">ยอดขายรวม</th>
-                        <th style="background-color: {h_cyan};">ROAS</th>
+                        <th style="background-color: {h_cyan};">ROAS (กรอกเอง)</th>
                         <th style="background-color: {h_cyan};">ROAS ADS</th>
                         <th style="background-color: {h_blue};">ทุนรวม</th>
                         <th style="background-color: {h_blue};">%ทุนรวม</th>
@@ -277,8 +280,8 @@ def render_dashboard():
                     <td class="num">{int(r['return_count'])}</td>
                     <td class="num">{int(r['cancel_count'])}</td>
                     <td class="num">{fmt_val(sales)}</td>
-                    <td class="num">{fmt_val(r['ROAS'])}</td>
                     <td class="num">{fmt_val(r['manual_roas'])}</td>
+                    <td class="num">{fmt_val(r['ROAS ADS'])}</td>
                     <td class="num">{fmt_val(r['cost_sum'])}</td>
                     <td class="num">{fmt_val(safe_div(r['cost_sum'], sales), True)}</td>
                     <td class="num">{fmt_val(r['fees_sum'])}</td>
@@ -314,8 +317,8 @@ def render_dashboard():
             sum_net_profit = calc['กำไรสุทธิ'].sum()
             sum_missing_income = int(calc.get('missing_income_orders', pd.Series(dtype=float)).sum())
 
-            total_roas = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
-            avr_ROAS_ADS = calc['manual_roas'].mean() if len(calc) > 0 else 0
+            total_roas_ads = (sum_sales / sum_ads_total) if sum_ads_total > 0 else 0
+            avg_roas_manual = calc['manual_roas'].mean() if len(calc) > 0 else 0
             total_missing_badge = ""
             if sum_missing_income > 0:
                 total_missing_badge = f' <span title="TikTok: มี {sum_missing_income} ออเดอร์ในช่วงนี้ที่ยังไม่มี Income เข้ามาตรงกับออเดอร์">⚠️{sum_missing_income}</span>'
@@ -329,8 +332,8 @@ def render_dashboard():
                 <td class="num">{int(calc['return_count'].sum())}</td>
                 <td class="num">{int(calc['cancel_count'].sum())}</td>
                 <td class="num">{fmt_val(sum_sales)}</td>
-                <td class="num">{fmt_val(total_roas)}</td>
-                <td class="num">{fmt_val(avr_ROAS_ADS)}</td>
+                <td class="num">{fmt_val(avg_roas_manual)}</td>
+                <td class="num">{fmt_val(total_roas_ads)}</td>
                 <td class="num">{fmt_val(sum_cost)}</td>
                 <td class="num">{fmt_val(safe_div(sum_cost, sum_sales), True)}</td>
                 <td class="num">{fmt_val(sum_fee)}</td>
