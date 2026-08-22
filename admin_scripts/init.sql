@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS product_costs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Migration: add product_name override column (editable SKU display name)
+ALTER TABLE product_costs ADD COLUMN IF NOT EXISTS product_name TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_product_costs_sku ON product_costs(sku);
 
 -- Create daily_ads_metrics table

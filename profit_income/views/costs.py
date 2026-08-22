@@ -7,17 +7,24 @@ def render_costs():
     try:
         cur_data = get_product_costs()
         if cur_data.empty:
-            cur_data = pd.DataFrame(columns=['sku', 'unit_cost'])
-        for c in ['sku', 'unit_cost']:
+            cur_data = pd.DataFrame(columns=['sku', 'unit_cost', 'product_name'])
+        for c in ['sku', 'unit_cost', 'product_name']:
             if c not in cur_data.columns:
                 cur_data[c] = None
 
-        # ผูกชื่อสินค้าจากตาราง orders เพื่อใช้ค้นหา/เรียงลำดับ
+        # ชื่อสินค้าที่แก้ไขเองใน product_costs.product_name มีสิทธิ์เหนือกว่า
+        # ถ้ายังไม่เคยแก้ไข จะ fallback ไปใช้ชื่อล่าสุดจากตาราง orders เพื่อใช้ค้นหา/เรียงลำดับ
         try:
-            name_map = get_sku_product_names()
+            name_map = get_sku_product_names().rename(columns={'product_name': 'product_name_fallback'})
         except Exception:
-            name_map = pd.DataFrame(columns=['sku', 'product_name'])
-        display_df = cur_data[['sku', 'unit_cost']].merge(name_map, on='sku', how='left')
+            name_map = pd.DataFrame(columns=['sku', 'product_name_fallback'])
+        display_df = cur_data[['sku', 'unit_cost', 'product_name']].rename(
+            columns={'product_name': 'product_name_override'}
+        ).merge(name_map, on='sku', how='left')
+        has_override = display_df['product_name_override'].astype(str).str.strip().replace('nan', '') != ''
+        display_df['product_name'] = display_df['product_name_override'].where(
+            has_override, display_df['product_name_fallback']
+        )
         display_df['product_name'] = display_df['product_name'].fillna('-')
         display_df = display_df[['sku', 'product_name', 'unit_cost']]
 
@@ -59,7 +66,10 @@ def render_costs():
             filtered_df,
             column_config={
                 "sku": st.column_config.TextColumn("รหัสสินค้า (SKU)", required=True),
-                "product_name": st.column_config.TextColumn("ชื่อสินค้า", disabled=True),
+                "product_name": st.column_config.TextColumn(
+                    "ชื่อสินค้า",
+                    help="แก้ไขแล้วกด 'บันทึกต้นทุนสินค้า' เพื่ออัพเดทชื่อสินค้าของ SKU นี้ทั้งระบบ",
+                ),
                 "unit_cost": st.column_config.NumberColumn("ต้นทุน (บาท)", format="%.2f", min_value=0),
             },
             hide_index=True, num_rows="dynamic", use_container_width=True, height=1000,
@@ -70,12 +80,18 @@ def render_costs():
             edited = edited.dropna(subset=['sku']).copy()
             edited['sku'] = edited['sku'].astype(str).str.strip().str.upper()
             edited = edited[edited['sku'] != ''].drop_duplicates(subset=['sku'], keep='last')
+            # ชื่อที่พิมพ์ในตารางจะถูกปักหมุดเป็นชื่อ SKU นี้ทั้งระบบ; ถ้าเว้นว่าง/เป็น "-" (placeholder) ถือว่าไม่ override
+            edited['product_name'] = edited['product_name'].astype(str).str.strip()
+            edited.loc[edited['product_name'].isin(['', '-', 'nan', 'None']), 'product_name'] = None
             # รวมแถวที่ถูกกรองซ่อนอยู่กลับเข้าไปก่อนบันทึก (กันข้อมูลนอกผลค้นหาหาย)
             shown_skus = set(filtered_df['sku'].astype(str))
             hidden = cur_data[~cur_data['sku'].astype(str).isin(shown_skus)]
-            final = pd.concat([hidden[['sku', 'unit_cost']], edited[['sku', 'unit_cost']]], ignore_index=True)
+            final = pd.concat(
+                [hidden[['sku', 'unit_cost', 'product_name']], edited[['sku', 'unit_cost', 'product_name']]],
+                ignore_index=True,
+            )
             final = final.drop_duplicates(subset=['sku'], keep='last')
-            save_product_costs(final[['sku', 'unit_cost']], replace=True)
+            save_product_costs(final[['sku', 'unit_cost', 'product_name']], replace=True)
             st.cache_data.clear()
             st.success("✅ บันทึกต้นทุนสำเร็จ!")
             st.rerun()

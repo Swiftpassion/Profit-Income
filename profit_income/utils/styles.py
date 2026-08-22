@@ -30,7 +30,18 @@ def load_css():
         border-radius: 8px;
         margin-top: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        background-color: #1c1c1c; 
+        background-color: #1c1c1c;
+    }
+
+    /* หน้ารายละเอียดออเดอร์: ฟรีซ header ทั้งหมดขณะเลื่อนดูตาราง */
+    .frozen-header-wrapper {
+        max-height: 75vh;
+        overflow-y: auto;
+    }
+    .frozen-header-wrapper table th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
     
     /* Table Styling General */

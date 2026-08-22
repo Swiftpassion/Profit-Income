@@ -27,6 +27,8 @@ def init_db():
     
     # Ensure shops table exists
     init_shops_table()
+    # Ensure product_costs has the product_name override column
+    init_product_costs_table()
     return True
 
 def init_shops_table():
@@ -52,6 +54,20 @@ def init_shops_table():
             ]
             for s, p in default_shops:
                 conn.execute(text("INSERT INTO shops (shop_name, platform) VALUES (:s, :p)"), {'s': s, 'p': p})
+
+def init_product_costs_table():
+    """Ensure product_costs exists and has a product_name override column."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS product_costs (
+                id SERIAL PRIMARY KEY,
+                sku TEXT NOT NULL UNIQUE,
+                unit_cost NUMERIC DEFAULT 0,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """))
+        conn.execute(text("ALTER TABLE product_costs ADD COLUMN IF NOT EXISTS product_name TEXT;"))
 
 def get_all_shops():
     """Fetch all shops as a DataFrame."""
@@ -93,7 +109,8 @@ def fetch_orders(platform=None, start_date=None, end_date=None):
     # ออเดอร์ที่ถูก "ยกเลิก" ไม่นำมาคิดกำไรขาดทุน -> บังคับต้นทุน/รายได้/ค่าธรรมเนียม/แอฟฟิลิเอตเป็น 0
     query = """
         SELECT
-            o.id, o.order_id, o.tracking_id, o.sku, o.product_name,
+            o.id, o.order_id, o.tracking_id, o.sku,
+            COALESCE(NULLIF(pc.product_name, ''), o.product_name) AS product_name,
             o.platform, o.shop_name, o.status, o.quantity,
             CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.sales_amount END AS sales_amount,
             CASE WHEN o.status = 'ยกเลิก' THEN 0 ELSE o.settlement_amount END AS settlement_amount,

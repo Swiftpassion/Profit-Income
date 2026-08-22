@@ -286,6 +286,6 @@ def render_details():
         </tr>
         """
         html += "</tbody></table>"
-        st.markdown(f'<div class="custom-table-wrapper">{html}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="custom-table-wrapper frozen-header-wrapper">{html}</div>', unsafe_allow_html=True)
     except Exception as e:
         st.error(f"Error Details: {e}")
