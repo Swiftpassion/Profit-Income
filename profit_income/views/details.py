@@ -104,6 +104,7 @@ def render_details():
         is_settlement = selected_platform in ('TIKTOK', 'LAZADA')
         if is_settlement:
             st.caption("ℹ️ กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน − ค่าดำเนินการ** | ⚠️ = ยังไม่มี Income เข้ามาตรงกับออเดอร์นี้ (ยอดเงินที่ได้รับจริง/กำไรสุทธิยังไม่ควรใช้อ้างอิง)")
+        st.caption("ℹ️ กำไรสุทธิในหน้านี้**ยังไม่ได้หักค่าแอด** (ค่าแอดเป็นยอดรายวัน ไม่ผูกกับออเดอร์แต่ละรายการ) ต่างจากหน้า \"สรุปยอดขายทุกแพลตฟอร์ม\" ที่หักค่าแอดรวมแล้ว จึงเปรียบเทียบกำไรสุทธิระหว่างสองหน้านี้ตรง ๆ ไม่ได้")
 
         # 1. Filter by Order ID
         if filter_order_id:
@@ -157,6 +158,9 @@ def render_details():
         valid_order_ids = grouped_metrics.loc[valid_orders_mask, 'order_id']
         df = df[df['order_id'].isin(valid_order_ids)]
 
+        # ยอดรวมทั้งช่วงวันที่ (ไม่ผูกกับหน้า pagination ด้านล่าง) ใช้แถว "รวมทั้งหมด" ท้ายตาราง
+        totals = grouped_metrics.loc[valid_orders_mask]
+
         df = df.sort_values(by=['created_date', 'order_id'], ascending=[False, False])
 
         if df.empty:
@@ -175,7 +179,7 @@ def render_details():
         with col_p2:
             st.empty()
         with col_p3:
-            st.caption(f"แสดงหน้า {page}/{total_pages} (ทั้งหมด {total_items:,.0f} ออเดอร์)")
+            st.caption(f"แสดงหน้า {page}/{total_pages} (ทั้งหมด {total_items:,.0f} ออเดอร์) | แถว \"รวมทั้งหมด\" ท้ายตารางคือยอดรวมทั้งช่วงวันที่ ไม่ใช่เฉพาะหน้านี้")
 
         start_idx = (page - 1) * items_per_page
         end_idx = start_idx + items_per_page
@@ -219,7 +223,6 @@ def render_details():
             val = (num/div) * 100
             return f"{val:,.1f}%"
 
-        sum_sales = 0; sum_net_profit = 0
         for order_id, group in grouped:
             row_counter += 1
             bg_color = "#1c1c1c" if row_counter % 2 != 0 else "#262626"
@@ -237,7 +240,6 @@ def render_details():
                 order_net_profit = order_settle - order_cost_total - ops_cost
             else:
                 order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost
-            sum_sales += order_sales; sum_net_profit += order_net_profit
 
             created_date_str = format_thai_date(group.iloc[0]['created_date'])
             settle_date_str = format_thai_date(group.iloc[0]['settlement_date']) if group.iloc[0]['settlement_date'] else "-"
@@ -278,11 +280,29 @@ def render_details():
                     html += f'<td rowspan="{num_items}" style="border:1px solid #333; text-align:center;">{fmt_pct(order_net_profit, order_sales)}</td>'
                 html += "</tr>"
 
+        # ยอดรวมทั้งช่วงวันที่ (ตาม totals ที่คำนวณจาก grouped_metrics ด้านบน ไม่ใช่แค่หน้าที่แสดงอยู่)
+        sum_sales = totals['total_sales'].sum()
+        sum_cost = totals['total_cost'].sum()
+        sum_fees = totals['total_fees'].sum()
+        sum_aff = totals['total_aff'].sum()
+        sum_ops = totals['ops_cost'].sum()
+        sum_settle = totals['total_settle'].sum()
+        sum_net_profit = totals['net_profit'].sum()
+
         html += f"""
         <tr style="background-color: #010538; font-weight: bold;">
-            <td colspan="4" style="text-align: center; padding: 10px; border-top: 2px solid #555;">รวมทั้งหมด</td>
+            <td colspan="4" style="text-align: center; padding: 10px; border-top: 2px solid #555;">รวมทั้งหมด (ทั้งช่วงวันที่)</td>
             <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_sales)}</td>
-            <td colspan="10" style="border-top: 2px solid #555;"></td>
+            <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_cost)}</td>
+            <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_cost, sum_sales)}</td>
+            <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_fees)}</td>
+            <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_fees, sum_sales)}</td>
+            <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_aff)}</td>
+            <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_aff, sum_sales)}</td>
+            <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_ops)}</td>
+            <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_ops, sum_sales)}</td>
+            <td style="border-top: 2px solid #555;"></td>
+            <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_settle)}</td>
             <td style="text-align: right; border-top: 2px solid #555;">{fmt_num(sum_net_profit)}</td>
             <td style="text-align: center; border-top: 2px solid #555;">{fmt_pct(sum_net_profit, sum_sales)}</td>
         </tr>

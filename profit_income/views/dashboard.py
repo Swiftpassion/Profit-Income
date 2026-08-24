@@ -47,6 +47,8 @@ def render_dashboard():
     if 'TIKTOK' in sel_plats:
         st.caption("ℹ️ TikTok: กำไร/กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน** (แพลตฟอร์มอื่นยังคำนวณจากยอดขาย − ต้นทุน − ค่าธรรมเนียม − ค่าแอฟฟิลิเอต) | ⚠️N ที่คอลัมน์กำไรสุทธิ = จำนวนออเดอร์ TikTok วันนั้นที่ยังไม่มี Income เข้ามาตรงกับออเดอร์ (ตัวเลขวันนั้นยังไม่ควรใช้อ้างอิง)")
 
+    st.caption("ℹ️ คอลัมน์จำนวนออเดอร์ทั้งหมดนับตาม **เลขคำสั่งซื้อ** (ไม่ใช่จำนวนแถวสินค้า) | ค่าดำเนินการ = 10 บาท × ออเดอร์ที่ไม่ได้ยกเลิก | **กำไรสุทธิของหน้านี้หักค่าแอดรวมแล้ว** ต่างจากหน้า \"รายละเอียดออเดอร์\" ที่ยังไม่หักค่าแอด (ค่าแอดเป็นรายวัน ไม่ผูกกับออเดอร์)")
+
     # Data Processing with Cache
     try:
         # A. ดึงข้อมูลออเดอร์ (Cached)
@@ -152,10 +154,6 @@ def render_dashboard():
             dates_df = pd.DataFrame({'created_date': date_range.date})
 
             daily = df.groupby('created_date').agg(
-                success_count=('status', lambda x: (x == 'ออเดอร์สำเร็จ').sum()),
-                pending_count=('status', lambda x: (x == 'รอดำเนินการ').sum()),
-                return_count=('status', lambda x: (x == 'ตีกลับ').sum()),
-                cancel_count=('status', lambda x: (x == 'ยกเลิก').sum()),
                 sales_sum=('sales_amount', 'sum'),
                 cost_sum=('total_cost', 'sum'),
                 fees_sum=('fees', 'sum'),
@@ -165,18 +163,37 @@ def render_dashboard():
             daily = pd.merge(daily, missing_income, on='created_date', how='left')
             daily['missing_income_orders'] = daily['missing_income_orders'].fillna(0)
 
-            # ค่าดำเนินการ 10 บาท/ออเดอร์ นับตามเลขคำสั่งซื้อ (ไม่ใช่จำนวนแถวสินค้า) ให้ตรงกับหน้ารายละเอียดออเดอร์
-            # ออเดอร์ที่ทุกแถวเป็น "ยกเลิก" ไม่คิดค่าดำเนินการ
-            order_day = df.groupby(['created_date', 'order_id'])['status'].apply(
-                lambda s: (s == 'ยกเลิก').all()
-            ).reset_index(name='all_cancelled')
-            billable = (
-                order_day.loc[~order_day['all_cancelled']]
-                .groupby('created_date')['order_id'].nunique()
-                .reset_index(name='billable_orders')
+            # นับจำนวนออเดอร์ (ไม่ใช่จำนวนแถวสินค้า) ให้ตรงกับหน้ารายละเอียดออเดอร์
+            # ออเดอร์หนึ่งอาจมีหลายแถว (หลายสินค้า) ที่สถานะต่างกันได้ในทางทฤษฎี จึงเลือกสถานะ
+            # ตัวแทนของออเดอร์ตามลำดับความสำคัญ: ออเดอร์จะถือว่า "ยกเลิก" ก็ต่อเมื่อทุกแถวเป็นยกเลิก
+            # (ตรงกับกติกาคิดค่าดำเนินการเดิม) ส่วนสถานะอื่นเอาตัวที่ "ดีที่สุด" ของแต่ละออเดอร์
+            STATUS_PRIORITY = ['ออเดอร์สำเร็จ', 'ตีกลับ', 'รอดำเนินการ', 'ยกเลิก']
+            rank_map = {s: i for i, s in enumerate(STATUS_PRIORITY)}
+            df['_status_rank'] = df['status'].map(rank_map).fillna(len(STATUS_PRIORITY))
+            order_day = (
+                df.sort_values('_status_rank')
+                  .drop_duplicates(subset=['created_date', 'order_id'])[['created_date', 'order_id', 'status']]
             )
-            daily = pd.merge(daily, billable, on='created_date', how='left')
-            daily['billable_orders'] = daily['billable_orders'].fillna(0)
+            df.drop(columns=['_status_rank'], inplace=True)
+
+            status_counts = (
+                order_day.groupby(['created_date', 'status']).size()
+                .unstack(fill_value=0)
+                .reindex(columns=STATUS_PRIORITY, fill_value=0)
+                .rename(columns={
+                    'ออเดอร์สำเร็จ': 'success_count',
+                    'ตีกลับ': 'return_count',
+                    'รอดำเนินการ': 'pending_count',
+                    'ยกเลิก': 'cancel_count',
+                })
+                .reset_index()
+            )
+            daily = pd.merge(daily, status_counts, on='created_date', how='left')
+            for c in ['success_count', 'return_count', 'pending_count', 'cancel_count']:
+                daily[c] = daily[c].fillna(0)
+
+            # ค่าดำเนินการ 10 บาท/ออเดอร์ นับตามเลขคำสั่งซื้อที่ไม่ได้ยกเลิก (billable = ทั้งหมด - ยกเลิก)
+            daily['billable_orders'] = daily['success_count'] + daily['pending_count'] + daily['return_count']
 
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
