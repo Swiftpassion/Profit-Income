@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(venv\\\\Scripts\\\\python.exe test_import.py)"
+      "Bash(venv\\\\Scripts\\\\python.exe test_import.py)",
+      "Read(//root/mos_app/**)",
+      "Read(//root/mos_app/profit_income/**)",
+      "Bash(git -C /root/mos_app rev-parse --show-toplevel)"
     ]
   }
 }
