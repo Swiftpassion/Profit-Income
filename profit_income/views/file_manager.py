@@ -178,6 +178,11 @@ def render_file_manager():
                     # Numeric Convert
                     master_df = clean_numeric_col(master_df, ['quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'unit_cost'])
 
+                    # กันแถวซ้ำ (เช่นอัปโหลดไฟล์เดิมซ้ำ) โดยไม่ลบแถวสินค้าที่ซ้ำ SKU จริงในออเดอร์เดียวกัน
+                    # (line_no ไล่ตามลำดับต่อ order_id+sku จาก processors.py)
+                    dedup_subset = [c for c in ['platform', 'shop_name', 'order_id', 'sku', 'line_no'] if c in master_df.columns]
+                    master_df = master_df.drop_duplicates(subset=dedup_subset, keep='first')
+
                     # --- PRO-RATE LOGIC ---
                     totals = master_df.groupby('order_id')['sales_amount'].transform('sum')
                     ratio = master_df['sales_amount'] / totals.replace(0, 1)
@@ -207,7 +212,6 @@ def render_file_manager():
                     status_box.text("☁️ บันทึกลงฐานข้อมูล...")
                     cols = ['order_id', 'status', 'sku', 'product_name', 'quantity', 'sales_amount', 'settlement_amount', 'fees', 'affiliate', 'net_profit', 'total_cost', 'unit_cost', 'has_income', 'settlement_date', 'created_date', 'shipped_date', 'tracking_id', 'shop_name', 'platform']
                     master_df = master_df[[c for c in cols if c in master_df.columns]]
-                    master_df = master_df.drop_duplicates(subset=['order_id', 'sku'], keep='first')
 
                     try:
                         save_orders(master_df, replace=True) 

@@ -149,6 +149,7 @@ def process_tiktok(order_files, income_files, shop_name):
                     extracted = extracted[~extracted['order_id'].str.contains('Platform', case=False, na=False)]
 
                     extracted = clean_text(extracted, 'sku')
+                    extracted['line_no'] = extracted.groupby(['order_id', 'sku']).cumcount()
                     all_orders.append(extracted)
 
             except Exception as e:
@@ -264,6 +265,7 @@ def process_shopee(order_files, income_files, shop_name):
                     ext = clean_date(ext, 'shipped_date')
                     ext['order_id'] = ext['order_id'].apply(clean_scientific_notation)
                     ext = clean_text(ext, 'sku')
+                    ext['line_no'] = ext.groupby(['order_id', 'sku']).cumcount()
 
                     all_orders.append(ext)
             except Exception as e:
@@ -317,7 +319,7 @@ def process_lazada(order_files, income_files, shop_name):
     if income_dfs:
         raw_income = pd.concat(income_dfs, ignore_index=True)
         income_master = raw_income.groupby('order_id').agg(
-            settlement_amount=('settlement_amount', lambda x: x[x > 0].sum()),
+            settlement_amount=('settlement_amount', 'sum'),
             fees=('settlement_amount', lambda x: abs(x[x < 0].sum())),
             settlement_date=('settlement_date', 'first')
         ).reset_index()
@@ -343,7 +345,7 @@ def process_lazada(order_files, income_files, shop_name):
                     ext['order_id'] = oid
                     ext['status'] = get_col_data(df, ['status', 'สถานะ'])
                     ext['sku'] = get_col_data(df, ['sellerSku', 'Seller SKU', 'รหัสสินค้าของร้านค้า'])
-                    ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['paidPrice', 'ราคาที่ชำระ', 'Paid Price']), errors='coerce').fillna(0)
+                    ext['sales_amount'] = pd.to_numeric(get_col_data(df, ['unitPrice', 'ราคาต่อหน่วย', 'Unit Price', 'paidPrice']), errors='coerce').fillna(0)
                     ext['tracking_id'] = get_col_data(df, ['trackingCode', 'Tracking Code', 'รหัสติดตามพัสดุ'])
                     ext['created_date'] = get_col_data(df, ['createTime', 'Created at', 'เวลาที่สั่งซื้อ'])
                     ext['shipped_date'] = get_col_data(df, ['updateTime', 'Updated at', 'เวลาที่ปรับปรุงล่าสุด'])
@@ -357,6 +359,7 @@ def process_lazada(order_files, income_files, shop_name):
                     ext = clean_date(ext, 'shipped_date')
                     ext['order_id'] = ext['order_id'].apply(clean_scientific_notation)
                     ext = clean_text(ext, 'sku')
+                    ext['line_no'] = ext.groupby(['order_id', 'sku']).cumcount()
                     all_orders.append(ext)
             except Exception as e:
                 st.error(f"❌ Lazada Order {filename}: {e}")
@@ -364,17 +367,18 @@ def process_lazada(order_files, income_files, shop_name):
     if not all_orders: return pd.DataFrame()
     final_orders = pd.concat(all_orders, ignore_index=True)
 
-    # Lazada ยังใช้สูตรกำไรสุทธิแบบเดิม (อิงยอดขาย) จึงไม่เช็คสถานะ income ต่อออเดอร์ในตอนนี้
+    # Lazada ใช้สูตรกำไรสุทธิแบบ settlement (เหมือน TikTok): ยอดเงินที่ได้รับจริง - ต้นทุน - ค่าดำเนินการ
     if not income_master.empty:
         final_orders['order_id'] = final_orders['order_id'].astype(str).str.strip()
         income_master['order_id'] = income_master['order_id'].astype(str).str.strip()
         merged = pd.merge(final_orders, income_master, on='order_id', how='left')
+        # order_id ที่ไม่พบในไฟล์ Income -> ยังไม่มี income เข้ามาตรงกับออเดอร์นี้
+        merged['has_income'] = merged['settlement_amount'].notna()
         for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
             if col in merged.columns: merged[col] = merged[col].fillna(0)
-        merged['has_income'] = True
         return merged
     else:
         for col in ['settlement_amount', 'affiliate', 'fees', 'original_price']:
             final_orders[col] = 0
-        final_orders['has_income'] = True
+        final_orders['has_income'] = False
         return final_orders

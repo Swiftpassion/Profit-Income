@@ -99,11 +99,11 @@ def render_details():
             df['has_income'] = True
         df['has_income'] = df['has_income'].fillna(True).astype(bool)
 
-        # TikTok: กำไรสุทธิ = ยอดเงินที่ได้รับจริง (settlement) - ต้นทุน - ค่าดำเนินการ
-        # แพลตฟอร์มอื่นยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต - ค่าดำเนินการ
-        is_tiktok = selected_platform == 'TIKTOK'
-        if is_tiktok:
-            st.caption("ℹ️ TikTok: กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน − ค่าดำเนินการ** | ⚠️ = ยังไม่มี Income เข้ามาตรงกับออเดอร์นี้ (ยอดเงินที่ได้รับจริง/กำไรสุทธิยังไม่ควรใช้อ้างอิง)")
+        # TikTok/Lazada: กำไรสุทธิ = ยอดเงินที่ได้รับจริง (settlement) - ต้นทุน - ค่าดำเนินการ
+        # Shopee ยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต - ค่าดำเนินการ
+        is_settlement = selected_platform in ('TIKTOK', 'LAZADA')
+        if is_settlement:
+            st.caption("ℹ️ กำไรสุทธิคำนวณจาก **ยอดเงินที่ได้รับจริง (Settlement) − ต้นทุน − ค่าดำเนินการ** | ⚠️ = ยังไม่มี Income เข้ามาตรงกับออเดอร์นี้ (ยอดเงินที่ได้รับจริง/กำไรสุทธิยังไม่ควรใช้อ้างอิง)")
 
         # 1. Filter by Order ID
         if filter_order_id:
@@ -140,7 +140,7 @@ def render_details():
         ).reset_index()
 
         grouped_metrics['ops_cost'] = grouped_metrics['is_cancelled'].apply(lambda c: 0.0 if c else ops_cost_fixed)
-        if is_tiktok:
+        if is_settlement:
             grouped_metrics['net_profit'] = grouped_metrics['total_settle'] - grouped_metrics['total_cost'] - grouped_metrics['ops_cost']
         else:
             grouped_metrics['net_profit'] = grouped_metrics['total_sales'] - grouped_metrics['total_cost'] - grouped_metrics['total_fees'] - grouped_metrics['total_aff'] - grouped_metrics['ops_cost']
@@ -163,9 +163,10 @@ def render_details():
             st.warning("ไม่พบข้อมูลตามเงื่อนไขที่เลือก")
             return
 
-        # --- Pagination ---
+        # --- Pagination (แบ่งตามเลขคำสั่งซื้อ ไม่ใช่แถวสินค้า กันออเดอร์คร่อมหน้า) ---
         items_per_page = 50
-        total_items = len(df)
+        order_seq = df['order_id'].drop_duplicates().tolist()
+        total_items = len(order_seq)
         total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
 
         col_p1, col_p2, col_p3 = st.columns([1, 2, 4])
@@ -174,11 +175,12 @@ def render_details():
         with col_p2:
             st.empty()
         with col_p3:
-            st.caption(f"แสดงหน้า {page}/{total_pages} (ทั้งหมด {total_items:,.0f} รายการ)")
+            st.caption(f"แสดงหน้า {page}/{total_pages} (ทั้งหมด {total_items:,.0f} ออเดอร์)")
 
         start_idx = (page - 1) * items_per_page
         end_idx = start_idx + items_per_page
-        page_df = df.iloc[start_idx:end_idx]
+        page_orders = order_seq[start_idx:end_idx]
+        page_df = df[df['order_id'].isin(page_orders)]
 
         h_blue = "#1e3c72"; h_cyan = "#22b8e6"; h_green = "#27ae60"
         html = f"""
@@ -231,7 +233,7 @@ def render_details():
             order_has_income = bool(group['has_income'].all())
             # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
             ops_cost = 0.0 if (group['status'] == 'ยกเลิก').all() else 10.0
-            if is_tiktok:
+            if is_settlement:
                 order_net_profit = order_settle - order_cost_total - ops_cost
             else:
                 order_net_profit = order_sales - order_cost_total - order_fees - order_aff - ops_cost

@@ -134,11 +134,11 @@ def render_dashboard():
                 df['has_income'] = True
             df['has_income'] = df['has_income'].fillna(True).astype(bool)
 
-            # TikTok: กำไร (ก่อนหักค่าแอด/ค่าดำเนินการ) คำนวณจากยอดเงินที่ได้รับจริง (Settlement) - ต้นทุน
-            # แพลตฟอร์มอื่นยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต
-            is_tiktok_row = df['platform'].astype(str).str.upper() == 'TIKTOK'
+            # TikTok/Lazada: กำไร (ก่อนหักค่าแอด/ค่าดำเนินการ) คำนวณจากยอดเงินที่ได้รับจริง (Settlement) - ต้นทุน
+            # Shopee ยังใช้สูตรเดิม = ยอดขาย - ต้นทุน - ค่าธรรมเนียม - ค่าแอฟฟิลิเอต
+            is_settlement_row = df['platform'].astype(str).str.upper().isin(['TIKTOK', 'LAZADA'])
             df['profit_base'] = df['sales_amount'] - df['total_cost'] - df['fees'] - df['affiliate']
-            df.loc[is_tiktok_row, 'profit_base'] = df.loc[is_tiktok_row, 'settlement_amount'] - df.loc[is_tiktok_row, 'total_cost']
+            df.loc[is_settlement_row, 'profit_base'] = df.loc[is_settlement_row, 'settlement_amount'] - df.loc[is_settlement_row, 'total_cost']
 
             # นับจำนวนออเดอร์ TikTok ที่ยังไม่มี Income เข้ามาตรงกับออเดอร์ ต่อวัน (ไว้เตือนผู้ใช้)
             order_level = df.drop_duplicates(subset='order_id')[['order_id', 'created_date', 'has_income']]
@@ -165,6 +165,19 @@ def render_dashboard():
             daily = pd.merge(daily, missing_income, on='created_date', how='left')
             daily['missing_income_orders'] = daily['missing_income_orders'].fillna(0)
 
+            # ค่าดำเนินการ 10 บาท/ออเดอร์ นับตามเลขคำสั่งซื้อ (ไม่ใช่จำนวนแถวสินค้า) ให้ตรงกับหน้ารายละเอียดออเดอร์
+            # ออเดอร์ที่ทุกแถวเป็น "ยกเลิก" ไม่คิดค่าดำเนินการ
+            order_day = df.groupby(['created_date', 'order_id'])['status'].apply(
+                lambda s: (s == 'ยกเลิก').all()
+            ).reset_index(name='all_cancelled')
+            billable = (
+                order_day.loc[~order_day['all_cancelled']]
+                .groupby('created_date')['order_id'].nunique()
+                .reset_index(name='billable_orders')
+            )
+            daily = pd.merge(daily, billable, on='created_date', how='left')
+            daily['billable_orders'] = daily['billable_orders'].fillna(0)
+
             step1 = pd.merge(dates_df, daily, on='created_date', how='left').fillna(0)
             
             if not ads_db.empty:
@@ -184,8 +197,7 @@ def render_dashboard():
             def safe_div(a, b): return (a/b*100) if b > 0 else 0
 
             calc['ROAS ADS'] = calc.apply(lambda x: (x['sales_sum']/x['ค่าแอดรวม']) if x['ค่าแอดรวม'] > 0 else 0, axis=1)
-            # ออเดอร์ที่ "ยกเลิก" ไม่คิดค่าดำเนินการ 10 บาท/ออเดอร์
-            calc['billable_orders'] = calc['success_count'] + calc['pending_count'] + calc['return_count']
+            # ค่าดำเนินการนับตามเลขคำสั่งซื้อ (billable_orders คำนวณไว้แล้วด้านบน)
             calc['ค่าดำเนินการ'] = calc['billable_orders'] * 10
             calc['กำไรสุทธิ'] = calc['กำไร'] - calc['ค่าแอดรวม'] - calc['ค่าดำเนินการ']
 
