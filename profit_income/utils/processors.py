@@ -57,17 +57,17 @@ def process_tiktok(order_files, income_files, shop_name):
                             is_order = type_col.str.strip().isin(['Order', 'คำสั่งซื้อ'])
                             inc['order_id'] = inc['order_id'].where(is_order, related_clean)
 
-                        settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ', 'Total settlement amount', 'จำนวนเงินที่ชำระทั้งหมด'])
-                        inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0)
+                        settle = get_col_data(df, ['Settlement Amount', 'Payout Amount', 'ยอดเงินที่ได้รับ', 'Total settlement amount', 'จำนวนเงินที่ชำระทั้งหมด', 'ยอดการชำระเงินทั้งหมด'])
+                        inc['settlement_amount'] = pd.to_numeric(settle, errors='coerce').fillna(0) if settle is not None else 0
 
                         aff = get_col_data(df, ['Affiliate Commission', 'Affiliate Fee', 'ค่าคอมมิชชั่น', 'ค่าคอมมิชชั่นแอฟฟิลิเอต'])
-                        aff_vals = pd.to_numeric(aff, errors='coerce').fillna(0)
+                        aff_vals = pd.to_numeric(aff, errors='coerce').fillna(0) if aff is not None else 0
                         # New format stores fees as negative; take abs so we store as positive cost
-                        inc['affiliate'] = aff_vals.abs()
+                        inc['affiliate'] = aff_vals.abs() if aff is not None else 0
 
                         # Total Fees includes Affiliate Commission — subtract to get platform fees only
                         total_fee_raw = get_col_data(df, ['Total Fees', 'ค่าธรรมเนียมทั้งหมด'])
-                        total_fees = pd.to_numeric(total_fee_raw, errors='coerce').fillna(0).abs()
+                        total_fees = pd.to_numeric(total_fee_raw, errors='coerce').fillna(0).abs() if total_fee_raw is not None else 0
                         inc['fees'] = total_fees - inc['affiliate']
 
                         inc['settlement_date'] = get_col_data(df, ['Order settled time', 'Settlement Date', 'Settled Time', 'เวลาที่ชำระคำสั่งซื้อ'])
